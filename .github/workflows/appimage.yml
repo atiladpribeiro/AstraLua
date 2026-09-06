@@ -1,0 +1,34 @@
+name: AstraLua AppImage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-pip cmake ninja-build g++ gettext libsqlite3-dev libjsoncpp-dev libluajit-5.1-dev libcurl4-gnutls-dev libopenal-dev libfreetype6-dev libpng-dev libjpeg-dev libxxf86vm-dev libgl1-mesa-dev libgles2-mesa-dev zlib1g-dev fuse3 file
+      - name: Instalar appimage-builder
+        run: |
+          python3 -m venv .venv-appimage
+          . .venv-appimage/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install appimage-builder
+      - name: Gerar AppImage
+        run: |
+          . .venv-appimage/bin/activate
+          appimage-builder --recipe misc/AppImageBuilder.yml --skip-tests
+      - name: Publicar AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstraLua-AppImage
+          path: '*.AppImage'
+          if-no-files-found: error
