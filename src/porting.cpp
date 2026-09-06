@@ -511,13 +511,15 @@ bool setSystemPaths()
 		break;
 	}
 
+	const char *const astralua_user_path = getenv("ASTRALUA_USER_PATH");
 	const char *const minetest_user_path = getenv("MINETEST_USER_PATH");
-	if (minetest_user_path && minetest_user_path[0] != '\0') {
+	if (astralua_user_path && astralua_user_path[0] != '\0') {
+		path_user = std::string(astralua_user_path);
+	} else if (minetest_user_path && minetest_user_path[0] != '\0') {
 		path_user = std::string(minetest_user_path);
 	} else {
 		// TODO: luanti with migration
-		path_user = std::string(getHomeOrFail()) + DIR_DELIM "."
-			+ "minetest";
+		path_user = std::string(getHomeOrFail()) + DIR_DELIM "Luanti";
 	}
 
 	return true;
@@ -540,14 +542,17 @@ bool setSystemPaths()
 	}
 	CFRelease(resources_url);
 
+	const char *const astralua_user_path = getenv("ASTRALUA_USER_PATH");
 	const char *const minetest_user_path = getenv("MINETEST_USER_PATH");
-	if (minetest_user_path && minetest_user_path[0] != '\0') {
+	if (astralua_user_path && astralua_user_path[0] != '\0') {
+		path_user = std::string(astralua_user_path);
+	} else if (minetest_user_path && minetest_user_path[0] != '\0') {
 		path_user = std::string(minetest_user_path);
 	} else {
 		// TODO: luanti with migration
 		path_user = std::string(getHomeOrFail())
 			+ "/Library/Application Support/"
-			+ "minetest";
+			+ "Luanti";
 	}
 	return true;
 }
@@ -558,8 +563,11 @@ bool setSystemPaths()
 bool setSystemPaths()
 {
 	path_share = STATIC_SHAREDIR;
+	const char *const astralua_user_path = getenv("ASTRALUA_USER_PATH");
 	const char *const minetest_user_path = getenv("MINETEST_USER_PATH");
-	if (minetest_user_path && minetest_user_path[0] != '\0') {
+	if (astralua_user_path && astralua_user_path[0] != '\0') {
+		path_user = std::string(astralua_user_path);
+	} else if (minetest_user_path && minetest_user_path[0] != '\0') {
 		path_user = std::string(minetest_user_path);
 	} else {
 		// TODO: luanti with migration
