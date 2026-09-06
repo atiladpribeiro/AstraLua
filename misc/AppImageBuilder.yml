@@ -53,16 +53,6 @@ script: |
     cmake --build appimage-build --parallel $(nproc) --config Release
     cmake --install appimage-build
 
-    # AppImage usa ~/Luanti para dados do usuário.
-    cat > AppDir/AppRun <<'APP_RUN'
-#!/bin/sh
-set -eu
-app_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-export ASTRALUA_USER_PATH="${ASTRALUA_USER_PATH:-${HOME}/Luanti}"
-exec "$app_dir/usr/bin/astralua" "$@"
-APP_RUN
-    chmod +x AppDir/AppRun
-
     # Is a backup icon location in case
     mkdir -p AppDir/usr/share/astralua/misc
     cp AppDir/usr/share/icons/hicolor/128x128/apps/astralua.png AppDir/usr/share/astralua/misc/astralua-xorg-icon-128.png
