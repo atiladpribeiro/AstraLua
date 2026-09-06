@@ -1,0 +1,35 @@
+name: AstraLua Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ gettext libsqlite3-dev libjsoncpp-dev libluajit-5.1-dev libcurl4-gnutls-dev libopenal-dev libfreetype6-dev libpng-dev libjpeg-dev libxxf86vm-dev libgl1-mesa-dev libgles2-mesa-dev zlib1g-dev libluajit-5.1-dev
+      - name: Configurar
+        run: cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=ON -DBUILD_SERVER=OFF -DBUILD_UNITTESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_DOCUMENTATION=OFF -DRUN_IN_PLACE=TRUE -DENABLE_LTO=OFF
+      - name: Compilar
+        run: cmake --build build-linux --parallel
+      - name: Testes unitários
+        run: |
+          test_bin=$(find build-linux -type f -executable -name 'unittest*' -print -quit)
+          if [ -n "$test_bin" ]; then "$test_bin"; fi
+      - name: Empacotar executável
+        run: |
+          test -x bin/astralua || test -x bin/antilua || test -x bin/luanti
+          tar -czf AstraLua-linux-x86_64.tar.gz bin builtin clientmods games minetest.conf.example misc 2>/dev/null || tar -czf AstraLua-linux-x86_64.tar.gz bin builtin clientmods games
+      - name: Publicar artefato Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstraLua-linux-bin
+          path: AstraLua-linux-x86_64.tar.gz
