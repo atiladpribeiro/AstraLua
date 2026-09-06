@@ -27,9 +27,7 @@ testes e instalações separadas. Não é preciso alterar a variável `HOME`.
 
 ## Compilação e distribuição
 
-A compilação final será executada pelo GitHub Actions. A distribuição
-prevista inclui um arquivo `.tar.gz` com executável em `bin/` e um AppImage
-para Linux x86_64. Os artefatos só devem ser publicados após os testes.
+A compilação pode ser feita localmente em um clique com `./compilar-astralua.sh` ou manualmente no GitHub Actions. Existem somente dois fluxos manuais para Linux: `AstraLua Linux`, que gera o pacote com executável em `bin/` e executa os testes, e `AstraLua AppImage`, que gera o AppImage. Nenhum fluxo é iniciado por push ou pull request. Os detalhes estão em [doc/pt_BR/COMPILAR.md](doc/pt_BR/COMPILAR.md).
 
 ## Licenças
 
