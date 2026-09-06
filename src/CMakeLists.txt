@@ -1,10 +1,9 @@
-project(cloakv4)
+project(antilua)
 
 INCLUDE(CheckTypeSize)
 INCLUDE(CheckIncludeFiles)
 INCLUDE(CheckLibraryExists)
-
-set(CREATE_MINETEST_ALIAS OFF CACHE BOOL "Create a Minetest alias for the build")
+INCLUDE(CheckCXXCompilerFlag)
 
 check_type_size(int SIZEOF_INT BUILTIN_TYPES_ONLY LANGUAGE CXX)
 if(SIZEOF_INT LESS 4)
@@ -69,7 +68,7 @@ if(PRECOMPILE_HEADERS)
 endif()
 
 
-option(ENABLE_CURL "Enable cURL support for fetching media" TRUE)
+option(ENABLE_CURL "Enable cURL support" TRUE)
 set(USE_CURL FALSE)
 
 if(ENABLE_CURL)
@@ -84,10 +83,10 @@ endif()
 
 if(NOT USE_CURL)
 	if(BUILD_CLIENT)
-		message(WARNING "cURL is required to load the server list")
+		message(WARNING "cURL is required to use the server list, content browser or update checker")
 	endif()
 	if(BUILD_SERVER)
-		message(WARNING "cURL is required to announce to the server list")
+		message(WARNING "cURL is required to announce to the server list or use the HTTP API")
 	endif()
 endif()
 
@@ -139,7 +138,7 @@ if(BUILD_CLIENT)
 	find_package(Freetype REQUIRED)
 endif()
 
-option(ENABLE_CURSES "Enable ncurses console" TRUE)
+option(ENABLE_CURSES "Enable ncurses console" ${BUILD_SERVER})
 set(USE_CURSES FALSE)
 
 if(ENABLE_CURSES)
@@ -377,12 +376,12 @@ endif()
 
 check_include_files(endian.h HAVE_ENDIAN_H)
 
-if((NOT PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR) AND EXISTS "${PROJECT_SOURCE_DIR}/cmake_config.h")
+if((NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_CURRENT_BINARY_DIR) AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake_config.h")
 	message(FATAL_ERROR "You are doing an out-of-tree build, but build artifacts are left in-tree. This will break the build!")
 endif()
 configure_file(
-	"${PROJECT_SOURCE_DIR}/cmake_config.h.in"
-	"${PROJECT_BINARY_DIR}/cmake_config.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/cmake_config.h.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/cmake_config.h"
 )
 
 
@@ -397,6 +396,26 @@ add_custom_target(GenerateVersion
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
 
+# Command for builtin_files.cpp
+add_custom_command(
+	OUTPUT "${PROJECT_BINARY_DIR}/builtin_files.cpp"
+	COMMAND ${CMAKE_COMMAND}
+	-D "PROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+	-D "PROJECT_BINARY_DIR=${PROJECT_BINARY_DIR}"
+	-D "BUILTIN_BASE_PATH=${BUILTIN_BASE_PATH}"
+	-D "BUILTIN_SRCS=\"${BUILTIN_SRCS}\"" # (relative paths, so should work without escaping)
+	-P "${CMAKE_SOURCE_DIR}/cmake/Modules/HashBuiltinFiles.cmake"
+	DEPENDS
+		${BUILTIN_SRCS_ABS}
+		"${PROJECT_SOURCE_DIR}/builtin_files.cpp.in"
+		"${CMAKE_SOURCE_DIR}/cmake/Modules/HashBuiltinFiles.cmake"
+	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Target to generate just builtin_files.cpp (used by util/ci/clang-tidy.sh)
+add_custom_target(GenerateBuiltinFilesCpp
+	DEPENDS "${PROJECT_BINARY_DIR}/builtin_files.cpp")
+
+
 add_subdirectory(threading)
 add_subdirectory(content)
 add_subdirectory(database)
@@ -406,11 +425,20 @@ add_subdirectory(script)
 add_subdirectory(util)
 add_subdirectory(server)
 
+if(BUILD_UNITTESTS)
+	add_subdirectory(test)
+	add_subdirectory(unittest)
+endif()
+if(BUILD_BENCHMARKS)
+	add_subdirectory(benchmark)
+endif()
+
 # Source files that are identical between server & client builds.
 # This means they don't use or include anything that depends on the
 # CHECK_CLIENT_BUILD() macro. If you wrongly add something here there will be
 # a compiler error and you need to instead add it to client_SRCS or common_SRCS.
 set(independent_SRCS
+	activeobject.cpp
 	chat.cpp
 	content_nodemeta.cpp
 	convert_json.cpp
@@ -419,7 +447,7 @@ set(independent_SRCS
 	face_position_cache.cpp
 	gettext_plural_form.cpp
 	httpfetch.cpp
-	hud.cpp
+	hud_element.cpp
 	inventory.cpp
 	itemstackmetadata.cpp
 	log.cpp
@@ -435,11 +463,13 @@ set(independent_SRCS
 	profiler.cpp
 	serialization.cpp
 	settings.cpp
+	sound_spec.cpp
 	staticobject.cpp
 	terminal_chat_console.cpp
 	texture_override.cpp
 	tileanimation.cpp
 	tool.cpp
+	${PROJECT_BINARY_DIR}/builtin_files.cpp
 	${common_network_SRCS}
 	${content_SRCS}
 	${database_SRCS}
@@ -447,8 +477,11 @@ set(independent_SRCS
 	${util_SRCS}
 )
 
+file(GLOB common_HDRS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+
 # /!\ Consider carefully before adding files here /!\
 set(common_SRCS
+	${common_HDRS}
 	clientdynamicinfo.cpp
 	collision.cpp
 	content_mapnode.cpp
@@ -481,24 +514,17 @@ set(common_SRCS
 	version.cpp
 	voxel.cpp
 	voxelalgorithms.cpp
+	${benchmark_SRCS}
 	${common_SCRIPT_SRCS}
 	${common_server_SRCS}
 	${mapgen_SRCS}
 	${server_network_SRCS}
+	${test_SRCS}
+	${unittest_SRCS}
 )
 
 if(ANDROID)
 	list(APPEND common_SRCS porting_android.cpp)
-endif()
-
-if(BUILD_UNITTESTS)
-	add_subdirectory(unittest)
-	list(APPEND common_SRCS ${UNITTEST_SRCS})
-endif()
-
-if(BUILD_BENCHMARKS)
-	add_subdirectory(benchmark)
-	list(APPEND common_SRCS ${BENCHMARK_SRCS})
 endif()
 
 if(BUILD_UNITTESTS OR BUILD_BENCHMARKS)
@@ -508,7 +534,7 @@ endif()
 # This gives us the icon and file version information
 if(WIN32)
 	set(WINRESOURCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../misc/winresource.rc")
-	set(EXE_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../misc/luanti.exe.manifest")
+	set(EXE_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../misc/antilua.exe.manifest")
 	if(MINGW)
 		if(NOT CMAKE_RC_COMPILER)
 			set(CMAKE_RC_COMPILER "windres.exe")
@@ -534,20 +560,15 @@ if (BUILD_CLIENT)
 endif(BUILD_CLIENT)
 
 list(APPEND client_SRCS
+	${benchmark_client_SRCS}
 	${common_SRCS}
 	${gui_SRCS}
 	${client_network_SRCS}
 	${client_irrlicht_changes_SRCS}
 	${client_SCRIPT_SRCS}
+	${test_client_SRCS}
+	${unittest_client_SRCS}
 )
-
-if(BUILD_UNITTESTS)
-	list(APPEND client_SRCS ${UNITTEST_CLIENT_SRCS})
-endif()
-
-if(BUILD_BENCHMARKS)
-	list(APPEND client_SRCS ${BENCHMARK_CLIENT_SRCS})
-endif()
 
 # Server sources
 # (nothing here because a client always comes with a server)
@@ -609,7 +630,7 @@ endif()
 add_library(EngineCommon OBJECT
 	${independent_SRCS}
 )
-add_dependencies(EngineCommon GenerateVersion)
+add_dependencies(EngineCommon GenerateVersion GenerateBuiltinFilesCpp)
 target_link_libraries(EngineCommon
 	sha256
 )
@@ -655,7 +676,7 @@ if(BUILD_CLIENT)
 			MACOSX_BUNDLE TRUE
 			MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist"
 			RESOURCE "${client_RESOURCES}"
-			XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.luanti.luanti"
+			XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.antilua.antilua"
 			XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME "YES"
 			XCODE_ATTRIBUTE_INSTALL_PATH "/Applications"
 			XCODE_ATTRIBUTE_SKIP_INSTALL "NO"
@@ -697,6 +718,7 @@ if(BUILD_CLIENT)
 		${GMP_LIBRARY}
 		${JSON_LIBRARY}
 		${LUA_BIT_LIBRARY}
+		lstrpack
 		sha256
 		${FREETYPE_LIBRARY}
 		${PLATFORM_LIBS}
@@ -779,6 +801,7 @@ if(BUILD_SERVER)
 	get_target_property(
 		IRRLICHT_INCLUDES IrrlichtMt::IrrlichtMt INTERFACE_INCLUDE_DIRECTORIES)
 	target_include_directories(${PROJECT_NAME}server PRIVATE ${IRRLICHT_INCLUDES})
+	find_package(PNG QUIET)
 	target_link_libraries(
 		${PROJECT_NAME}server
 		${ZLIB_LIBRARIES}
@@ -787,10 +810,14 @@ if(BUILD_SERVER)
 		${JSON_LIBRARY}
 		${LUA_LIBRARY}
 		${LUA_BIT_LIBRARY}
+		lstrpack
 		sha256
 		${GMP_LIBRARY}
 		${PLATFORM_LIBS}
 	)
+	if(PNG_FOUND)
+		target_link_libraries(${PROJECT_NAME}server ${PNG_LIBRARY})
+	endif()
 	target_compile_definitions(${PROJECT_NAME}server PRIVATE "MT_BUILDTARGET=2")
 	if(NOT USE_LUAJIT)
 		set_target_properties(${PROJECT_NAME}server PROPERTIES
@@ -851,7 +878,8 @@ option(APPLY_LOCALE_BLACKLIST "Use a blacklist to avoid known broken locales" TR
 if (GETTEXTLIB_FOUND AND APPLY_LOCALE_BLACKLIST)
 	set(GETTEXT_USED_LOCALES "")
 	foreach(LOCALE ${GETTEXT_AVAILABLE_LOCALES})
-		if (NOT "${LOCALE}" IN_LIST GETTEXT_BLACKLISTED_LOCALES)
+		if (NOT "${LOCALE}" IN_LIST GETTEXT_BLACKLISTED_LOCALES
+				AND IS_DIRECTORY "${GETTEXT_PO_PATH}/${LOCALE}")
 			list(APPEND GETTEXT_USED_LOCALES ${LOCALE})
 		endif()
 	endforeach()
@@ -936,6 +964,13 @@ if(MSVC)
 else()
 	# GCC or compatible compilers such as Clang
 	set(WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -Werror=vla")
+
+	# if possible, error on struct/class keyword missmatch
+	check_cxx_compiler_flag("-Werror=mismatched-tags" SUPPORTS_W_MISMATCHED_TAGS)
+	if(SUPPORTS_W_MISMATCHED_TAGS)
+		set(WARNING_FLAGS "${WARNING_FLAGS} -Werror=mismatched-tags")
+	endif()
+
 	if(WARN_ALL)
 		set(RELEASE_WARNING_FLAGS "${WARNING_FLAGS}")
 	else()
@@ -955,7 +990,7 @@ else()
 	set(MATH_FLAGS "-fno-math-errno -fno-trapping-math -fno-signed-zeros")
 
 	# Enable SSE for floating point math on 32-bit x86 by default
-	# reasoning see minetest issue #11810 and https://gcc.gnu.org/wiki/FloatingPointMath
+	# reasoning see luanti issue #11810 and https://gcc.gnu.org/wiki/FloatingPointMath
 	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 		check_c_source_compiles("#ifndef __i686__\n#error\n#endif\nint main(){}" IS_I686)
 		if(IS_I686)
@@ -977,8 +1012,8 @@ else()
 	set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 ${WARNING_FLAGS} ${OTHER_FLAGS}")
 
 	if(UNIX)
-		# enable assertions for libstdc++ or libc++
-		set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wp,-D_GLIBCXX_ASSERTIONS -Wp,-D_LIBCPP_ENABLE_ASSERTIONS=1")
+		# enable assertions for libstdc++
+		set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wp,-D_GLIBCXX_ASSERTIONS")
 	endif()
 	if(USE_GPROF)
 		set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -pg")
@@ -1080,7 +1115,8 @@ if(BUILD_CLIENT AND NOT ANDROID)
 		ARCHIVE DESTINATION ${BINDIR}
 		BUNDLE DESTINATION .
 	)
-	if(UNIX AND CREATE_MINETEST_ALIAS)
+	if(UNIX)
+		CreateLegacyAlias(luanti_alias "${EXECUTABLE_OUTPUT_PATH}/luanti" ${PROJECT_NAME})
 		CreateLegacyAlias(minetest_alias "${EXECUTABLE_OUTPUT_PATH}/minetest" ${PROJECT_NAME})
 	endif()
 
@@ -1107,6 +1143,7 @@ endif()
 if(BUILD_SERVER)
 	install(TARGETS ${PROJECT_NAME}server DESTINATION ${BINDIR})
 	if(UNIX)
+		CreateLegacyAlias(luantiserver_alias "${EXECUTABLE_OUTPUT_PATH}/luantiserver" ${PROJECT_NAME}server)
 		CreateLegacyAlias(minetestserver_alias "${EXECUTABLE_OUTPUT_PATH}/minetestserver" ${PROJECT_NAME}server)
 	endif()
 endif()
@@ -1118,7 +1155,7 @@ elseif (USE_GETTEXT)
 	set(MO_FILES)
 
 	foreach(LOCALE ${GETTEXT_USED_LOCALES})
-		set(PO_FILE_PATH "${GETTEXT_PO_PATH}/${LOCALE}/${PROJECT_NAME}.po")
+		set(PO_FILE_PATH "${GETTEXT_PO_PATH}/${LOCALE}/luanti.po")
 		set_mo_paths(MO_BUILD_PATH MO_DEST_PATH ${LOCALE})
 		set(MO_FILE_PATH "${MO_BUILD_PATH}/${PROJECT_NAME}.mo")
 

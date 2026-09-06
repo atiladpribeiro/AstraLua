@@ -1,333 +1,557 @@
-core.cheats = {
-	["Render"] = {
-		["CheatHUD"] = "cheat_hud",
-		["FullBright"] = "fullbright",
-		["BrightNight"] = "no_night",
-		["Xray"] = "xray",
-		["EntityESP"] = "enable_entity_esp",
-		["EntityTracers"] = "enable_entity_tracers",
-		["PlayerESP"] = "enable_player_esp",
-		["PlayerTracers"] = "enable_player_tracers",
-		["NodeESP"] = "enable_node_esp",
-		["NodeTracers"] = "enable_node_tracers",
-		["TunnelESP"] = "enable_tunnel_esp",
-		["TunnelTracers"] = "enable_tunnel_tracers",
-	--	["HUDBypass"] = "hud_flags_bypass", dont wanna work, will fix later
-		["HealthESP"] = "enable_health_esp",
-		["NoHurtCam"] = "no_hurt_cam",
-		["NoDrownCam"] = "no_drown_cam",
-		["NoParticles"] = "norender.particles",
-		["TaskTracers"] = "enable_task_tracers",
-		["TaskNodes"] = "enable_task_nodes",
-		["DetachedCamera"] = "detached_camera",
-		["TargetHUD"] = "enable_combat_target_hud",
-		["Coords"] = "coords",
-		["LeftHand"] = "left_hand",
-		["Nametags"] = "nametags",
-		["FOV"] = "fov_setting",
-		["Skybox"] = "custom_skybox",
-    },
-	["Player"] = {
-		["PrivBypass"] = "priv_bypass",
-		["NoFallDamage"] = "prevent_natural_damage",
-		["Reach"] = "reach",
-		["AutoRespawn"] = "autorespawn",
-	--	["LuaControl"] = "lua_control",
-		["NoForceRotate"] = "no_force_rotate",
-		["QuickMenu"] = "use_old_menu",
-		["NoViewBob"] = "nobob",
-    },
-	["Movement"] = {
-		["Freecam"] = "freecam",
-		["AutoForward"] = "continuous_forward",
-		["PitchMove"] = "pitch_move",
-		["AutoJump"] = "autojump",
-		["Flight"] = "free_move",
-		["Noclip"] = "noclip",
-		["FastMove"] = "fast_move",
-		["Jesus"] = "jesus",
-		["NoSlow"] = "no_slow",
-		["JetPack"] = "jetpack",
-		["AntiSlip"] = "antislip",
-		["AirJump"] = "airjump",
-		["Spider"] = "spider",
-		["AutoSneak"] = "autosneak",
-		["Step"] = "step",
-		["BunnyHop"] = "BHOP",
-    },
-	["Combat"] = {
-		["AntiKnockback"] = "antiknockback",
-		["AttachmentFloat"] = "float_above_parent",
-		["ThroughWalls"] = "throughwalls",
-    },
-	["Interact"] = {
-		["Blink"] = "blink",
-		["FastHit"] = "spamclick",
-		["AutoHit"] = "autohit",
-		["FastPlace"] = "fastplace",
-		["AutoPlace"] = "autoplace",
-		["AutoDig"] = "autodig",
-		["FastDig"] = "fastdig",
-		["InstantBreak"] = "instant_break",
-		["AutoTool"] = "autotool",
-    },
-	["Misc"] = {
-		["AutoStaff"] = "autostaff",
-		["AntiAFK"] = "anti_afk",
-    }
-}
------------------------------------------------------------REGISTER CHEATS-----------------------------------------------------------
-function core.register_cheat(cheatname, category, func)
-	core.cheats[category] = core.cheats[category] or {}
-	core.cheats[category][cheatname] = func
-end
------------------------------------------------------------CHEAT SETTINGS-----------------------------------------------------------
-core.cheat_settings = {}
+core.cheats = {}
 
-function core.register_cheat_setting(setting_name, parent_category, parent_setting, setting_id, setting_data)
-	 --settingname is the formatted setting name, e.g "Assist Mode"
-	 --parent_category is the category of the parent setting, e.g "Combat", 
-	 --parent_setting is the cheat this setting is for, e.g "autoaim", 
-	 --setting_id is the setting string, e.g "autoaim.mode", 
-	 --setting_data is the setting table, e.g 
-	 --if its a bool,         {type="bool"}
-	 --if its an int slider,  {type="slider_int", min=0, max=10, steps=10}
-	 --if its a float slider, {type="slider_float", min=0.0, max=10.0, steps=100}
-     --if its a text field,   {type="text", size=10}
-	 --if its a selectionbox, {type="selectionbox", options={"lock", "assist"}}
-	core.cheat_settings[parent_category] = core.cheat_settings[parent_category] or {}
-	core.cheat_settings[parent_category][parent_setting] = core.cheat_settings[parent_category][parent_setting] or {}
+core.cheat_defs = {}
 
-	core.cheat_settings[parent_category][parent_setting][setting_id] = {
-        name = setting_name,
-        type = setting_data.type,
-        min = setting_data.min,
-        max = setting_data.max,
-        steps = setting_data.steps,
-        size = setting_data.size,
-		options = setting_data.options
-    }
-end
------------------------------------------------------------CHEAT INFOTEXTS-----------------------------------------------------------
-core.infotexts = {}
-
-
-function core.register_cheat_with_infotext(cheatname, category, func, infotext)
-	core.infotexts[category] = core.infotexts[category] or {}	
-	core.infotexts[category][cheatname] = infotext	
-	core.register_cheat(cheatname, category, func)	
-end
-	
-function core.update_infotext(cheatname, category, func, infotext)
-	core.infotexts[category] = core.infotexts[category] or {}	
-	core.infotexts[category][cheatname] = infotext	
-	core.update_infotexts()
-end
------------------------------------------------------------CHEAT DESCRIPTIONS-----------------------------------------------------------
-core.descriptions = {}
-
-function core.register_cheat_with_description(cheatname, category, func, description)
-	core.descriptions[category] = core.descriptions[category] or {}
-	core.descriptions[category][cheatname] = description
-	core.get_description()
-end
-
-function core.register_cheat_description(cheatname, category, func, description)
-	core.descriptions[category] = core.descriptions[category] or {}
-	core.descriptions[category][cheatname] = description
-	core.get_description()
-end
------------------------------------------------------------PANIC-----------------------------------------------------------
-function core.panic()
-	for category_name, category in pairs(minetest.cheats) do
-		for cheat_name, cheat in pairs(category) do
-			local disable_cheats = minetest.cheats[category_name][cheat_name]
-			if type(disable_cheats) == "string" then core.settings:set(disable_cheats, "false") end
-		end
-	end
-end
-core.register_cheat("Panic", "Misc", core.panic)
------------------------------------------------------------TESTS, PRESET VALUES, ETC-----------------------------------------------------------
-
---Combat
-core.register_cheat_description("AntiKnockback", "Combat", "antiknockback", "Ignore knockback")
-core.register_cheat_description("AttachmentFloat", "Combat", "float_above_parent", "Puts the camera one node higher when attached to an entity")
-core.register_cheat_description("AutoTotem", "Combat", "autototem", "Automatically puts a totem in your offhand")
-core.register_cheat_description("AutoAim", "Combat", "autoaim", "Aims at a specified target")
-core.register_cheat_description("CombatLog", "Combat", "be_a_bitch", "Logs off when certain HP is reached")
-core.register_cheat_description("Criticals", "Combat", "critical_hits", "Does critical hits in mcl2/mcla")
-core.register_cheat_description("CrystalSpam", "Combat", "crystalspam", "Puts end crystals under the nearest player")
-core.register_cheat_description("Killaura", "Combat", "killaura", "Attacks a specified target. Slient mode is recommended in PVP servers, as it makes Killaura undetectable")
-core.register_cheat_description("Orbit", "Combat", "orbit", "Moves around a specified target")
-core.register_cheat_description("TriggerBot", "Combat", "tbot", "Automatically punch when aiming at an entity")
-core.register_cheat_description("ThroughWalls", "Combat", "throughwalls", "Lets you hit players or entities through walls")
---Interact
-core.register_cheat_description("FastDig", "Interact", "fastdig", "No block break cooldown")
-core.register_cheat_with_infotext("Blink", "Interact", "blink", "0ms")
-core.register_cheat_description("Blink", "Interact", "blink", "Delay sending of packets until this cheat is disabled.")
-core.register_cheat_description("FastPlace", "Interact", "fastplace", "No block placement cooldown")
-core.register_cheat_description("AutoDig", "Interact", "autodig", "Player can dig blocks without mouse press")
-core.register_cheat_description("AutoPlace", "Interact", "autoplace", "Auto place blocks")
-core.register_cheat_description("InstantBreak","Interact", "instant_break", "Instantly break blocks regardless of tool used")
-core.register_cheat_description("FastHit", "Interact", "spamclick", "Hit faster while holding")
-core.register_cheat_description("AutoHit","Interact", "autohit", "Auto hit when looking at entity")
-core.register_cheat_description("AutoTool", "Interact", "autotool", "Selects the best tool for an action")
---Inventory
-core.register_cheat_description("Enderchest", "Misc", minetest.open_enderchest, "Preview enderchest content in mcl/mcla")
-core.register_cheat_description("Hand", "Misc", minetest.open_handslot, "Open hand formspec in mcl/mcla")
---Misc
-core.register_cheat_description("AntiAFK", "Misc", "anti_afk", "Prevent afk by moving")
-core.register_cheat_description("AutoStaff", "Misc", "autostaff", "Automatically check player privs and assign them as a staff. WARNING: can be detected easily")
-core.register_cheat_setting("Warn Staff", "Misc", "autostaff", "autostaff.warn_staff", {type="bool"})
-core.register_cheat_description("AutoTeam", "Misc", "autoteam", "Sets allied players to your team in ctf. It might require you to run /team in some servers")
-core.register_cheat_description("Panic", "Misc", "panic", "Disables all cheats")
-core.register_cheat_description("Spammer", "Misc", "spammer", "Sends many chat messages")
---Movement
-core.register_cheat_description("AirJump", "Movement", "airjump", "Jump on air")
-core.register_cheat_description("AntiSlip", "Movement", "antislip", "Walk on slippery blocks without slipping")
-core.register_cheat_description("AutoForward", "Movement", "continuous_forward", "Walk forward automatically")
-core.register_cheat_description("AutoJump", "Movement", "autojump", "Jump automatically")
-core.register_cheat_description("AutoSneak", "Movement", "autosneak", "Always sneak")
---core.register_cheat_description("BunnyHop", "Movement", "BHOP", "No jump acceleration time and always jump")
-core.register_cheat_description("FastMove", "Movement", "fast_move", "Toggle fast (req. PrivBypass)")
-core.register_cheat_description("Flight", "Movement", "free_move", "Toggle flight (req. PrivBypass)")
-core.register_cheat_description("Freecam", "Movement", "freecam", "Spectator mode")
-core.register_cheat_description("Jesus", "Movement", "jesus", "Walk on liquids")
-core.register_cheat_description("JetPack", "Movement", "jetpack", "AirJump but you fall after jumping")
-core.register_cheat_description("NoSlow", "Movement", "noslow", "Sneaking doesn't slow you down")
-core.register_cheat_description("Noclip", "Movement", "noclip", "Walk through walls (req. PrivBypass)")
-core.register_cheat_description("Overrides", "Movement", "overrides", "Movement overrides")
-core.register_cheat_description("PitchMove", "Movement", "pitch_move", "While flying, you move where you're pointing")
-core.register_cheat_description("Spider", "Movement", "spider", "Climb walls")
-core.register_cheat_description("Step", "Movement", "step", "Climbs the block you're facing")
-core.register_cheat_description("Velocity", "Movement", "velocity", "Various velocity overrides")
-core.register_cheat_description("BunnyHop", "Movement", "BHOP", "No jump acceleration time and more")
---Player
-core.register_cheat_description("AutoRespawn", "Player", "autorespawn", "Respawn after dying. Singleplayer only")
-core.register_cheat_description("NoFallDamage", "Player", "prevent_natural_damage", "Receive no fall damage")
-core.register_cheat_description("NoForceRotate", "Player", "noforcerotate", "Prevent server from changing the player's view direction")
-core.register_cheat_description("NoViewBob", "Player", "nobob", "Disable view bobbing")
-core.register_cheat_description("PrivBypass", "Player", "priv_bypass", "Bypass fly, noclip, fast and wireframe rendering")
-core.register_cheat_description("QuickMenu", "Player", "use_old_menu", "Add a menu for quicker access to cheats")
-core.register_cheat_description("Reach", "Player", "reach", "Increase reach")
--- core.register_cheat_description("LuaControl", "Player", "luacontrol", "The player moves regardless of the received input")
---Render
-core.register_cheat_description("BrightNight", "Render", "no_night", "Always daytime")
-core.register_cheat_description("CheatHUD", "Render", "cheathud", "List enabled cheats")
-core.register_cheat_description("Coords", "Render", "coords", "Render coordinates in the bottom left corner")
-core.register_cheat_description("EntityESP", "Render", "enable_entity_esp", "See entities through walls")
-core.register_cheat_description("EntityTracers", "Render", "enable_entity_tracers", "Draw tracers to entities")
-core.register_cheat_description("FullBright", "Render", "fullbright", "No darkness")
-core.register_cheat_description("Left hand", "Render", "left_hand", "Switch to left hand")
-core.register_cheat_description("Skybox", "Render", "custom_skybox", "Render custom skybox")
-core.register_cheat_description("FOV", "Render", "fov_setting", "Have your FOV set to a custom value")
---core.register_cheat_description("HUDBypass", "Render", "hudbypass", "Allows player to toggle hud elements disabled by the game")
-core.register_cheat_description("HealthESP", "Render", "show_players_hp", "Shows player and entity HP")
-core.register_cheat_description("NoDrownCam", "Render", "no_drown_cam", "Disables drowning camera effect")
-core.register_cheat_description("NoHurtCam", "Render", "no_hurt_cam", "Disables hurt camera effect")
-core.register_cheat_description("NoParticles", "Render", "norender.particles", "Don't render particles")
-core.register_cheat_description("NodeESP", "Render", "enable_node_esp", "See specified nodes through walls")
-core.register_cheat_description("NodeTracers", "Render", "enable_node_tracers", "Draw tracers to specified nodes")
-core.register_cheat_description("PlayerESP", "Render", "enable_player_esp", "See players through walls")
-core.register_cheat_description("PlayerTracers", "Render", "enable_player_tracers", "Draw tracers to players")
-core.register_cheat_description("TunnelESP", "Render", "enable_tunnel_esp", "See tunnels through walls")
-core.register_cheat_description("TunnelTracers", "Render", "enable_tunnel_tracers", "Draw tracers to tunnels")
-core.register_cheat_description("Xray", "Render", "xray", "Don't render specific nodes")
-core.register_cheat_description("TargetHUD", "Render", "enable_combat_target_hud", "Shows best target on a HUD (depends on your combat settings)")
-core.register_cheat_description("DetachedCamera", "Render", "detached_camera", "Detaches what you're seeing from your actual camera")
-core.register_cheat_description("Nametags", "Render", "nametags", "Customize players nametags. Doesn't work well in CTF")
-core.register_cheat_description("LeftHand", "Render", "left_hand", "Switch to left hand")
---World
-core.register_cheat_description("AutoTNT", "World", "autotnt", "Puts TNT on the ground")
-core.register_cheat_description("BlockLava", "World", "blocklava", "Replace lava with the block you're holding")
-core.register_cheat_description("BlockWater", "World", "blockwater", "Replace water with the block you're holding")
-core.register_cheat_description("Replace", "World", "replace", "When you break a block it gets replaced by the block you're holding")
-core.register_cheat_description("Scaffold", "World", "scaffold", "Puts blocks below you")
-core.register_cheat_description("ScaffoldPlus", "World", "scaffoldplus", "Puts even more blocks under you")
-
-
---SOME SETTINGS
-
-core.register_cheat_setting("Nodelist", "Render", "xray", "xray.nodes", {type="text", size=10})
-core.register_cheat_setting("Nodelist", "Render", "enable_node_esp", "enable_node_esp.nodes", {type="text", size=10})
-core.register_cheat_setting("Multiplier", "Movement", "step", "step.mult", {type="slider_float", min=1.0, max=3.5, steps=6})
-core.register_cheat_setting("Y Offset", "Render", "cheat_hud", "cheat_hud.offset", {type="slider_int", min=0, max=200, steps=41})
-core.register_cheat_setting("Position", "Render", "cheat_hud", "cheat_hud.position", {type="selectionbox", options={"Top", "Bottom"}})
-core.register_cheat_setting("Type", "Render", "enable_health_esp", "enable_health_esp.type", {type="selectionbox", options={"Health Bar", "Above Head"}})
-core.register_cheat_setting("Players Only", "Render", "enable_health_esp", "enable_health_esp.players_only", {type="bool"})
-core.register_cheat_setting("Target highlight", "Render", "enable_combat_target_hud", "enable_combat_target_hud.target_highlight", {type="bool"})
-core.register_cheat_setting("HP", "Render", "nametags", "nametags.hp", {type="bool"})
-core.register_cheat_setting("Status Marker", "Render", "nametags", "nametags.status", {type="bool"})
-core.register_cheat_setting("Height", "Render", "nametags", "nametags.height", {type="slider_int", min=1, max=9, steps = 9});
-core.register_cheat_setting("Always jump", "Movement", "BHOP", "BHOP.jump", {type="bool"})
-core.register_cheat_setting("Always sprint", "Movement", "BHOP", "BHOP.sprint", {type="bool"})
-core.register_cheat_setting("1.2x speed boost", "Movement", "BHOP", "BHOP.speed", {type="bool"})
-core.register_cheat_setting("Field Of View", "Render", "fov_setting", "fov.step", {type="slider_int", min=72, max=160, steps = 89});
-
-core.register_cheat_setting("Display sunrise", "Render", "custom_skybox", "display_sunrise", {type="bool"})
-core.register_cheat_setting("Force custom sky", "Render", "custom_skybox", "force_custom_skybox", {type="bool"})
-core.register_cheat_setting("Force render sky", "Render", "custom_skybox", "force_render_skybox", {type="bool"})
-
-core.register_cheat_setting("Min Length", "Render", "enable_tunnel_esp", "tunnel_esp_min_length", {type="slider_int", min=1, max=10, steps=10})
-core.register_cheat_setting("Max Width", "Render", "enable_tunnel_esp", "tunnel_esp_max_width", {type="slider_int", min=1, max=5, steps=5})
-core.register_cheat_setting("Max Height", "Render", "enable_tunnel_esp", "tunnel_esp_max_height", {type="slider_int", min=1, max=5, steps=5})
-
-local update_interval = 0.25
-local timer = 0
-local blinktime = 0
-
-minetest.register_globalstep(function(dtime)
-    timer = timer + dtime
-
-	if core.settings:get_bool("blink") then
-		blinktime = blinktime + dtime
-		core.update_infotext("Blink", "Interact", "blink", math.floor(blinktime * 1000) .. "ms")
-		if blinktime > 10 then
-			core.settings:set_bool("blink", false)
-		end
+function core.register_cheat(name, ...)
+	local def
+	if type(name) == "table" then
+		def = name
+	elseif type(select(1, ...)) == "table" then
+		def = select(1, ...)
+		def.name = name
 	else
-		blinktime = 0
+		local category, setting_or_func = ...
+		def = { name = name, category = category }
+		if type(setting_or_func) == "string" then
+			def.setting = setting_or_func
+		else
+			def.func = setting_or_func
+		end
 	end
 
-    if timer >= update_interval then
-        timer = 0
+	-- Idempotent: skip if already registered (avoids duplicates on mod reload)
+	if core.cheats[def.category] and core.cheats[def.category][def.name] then
+		return core.cheats[def.category][def.name]
+	end
 
-        -- Step infotext
-        core.update_infotext("Step", "Movement", "step", "Mult: " .. core.settings:get("step.mult"))
+	def.conflicts_with = def.conflicts_with or {}
 
-        -- CombatLog infotext
-        core.update_infotext("CombatLog", "Combat", "combatlog", "Min HP: " .. core.settings:get("combatlog.hp"))
-
-        -- Nametags infotext
-        local nametags_enabled = core.settings:get_bool("nametags")
-        local nametags_hp = core.settings:get_bool("nametags.hp")
-        local nametags_status = core.settings:get_bool("nametags.status")
-
-        if nametags_enabled and nametags_hp and nametags_status then
-            core.update_infotext("Nametags", "Render", "nametags", "HP, Status")
-        elseif nametags_enabled and nametags_hp then
-            core.update_infotext("Nametags", "Render", "nametags", "HP")
-        elseif nametags_enabled and nametags_status then
-            core.update_infotext("Nametags", "Render", "nametags", "Status")
-        elseif nametags_enabled then
-            core.update_infotext("Nametags", "Render", "nametags", "")
-        end
-
-		--Scaffold infotext
-		if core.settings:get_bool("scaffold") then
-			if core.settings:get("scaffold.mode") == "Silent" then
-				core.update_infotext("Scaffold", "World", "scaffold", "Silent")
-			else
-				core.update_infotext("Scaffold", "World", "scaffold", "Blatant")
+	if def.setting then
+		if core.settings:get(def.setting) == nil then
+			core.settings:set(def.setting, "false")
+		end
+		core.cheat_defs[def.setting] = def
+		if def.cheat_settings then
+			for key, spec in pairs(def.cheat_settings) do
+				local full = def.setting .. "." .. key
+				if core.settings:get(full) == nil then
+					core.settings:set(full, tostring(spec.default))
+				end
 			end
 		end
-		--ScaffoldPlus infotext
-		if core.settings:get_bool("scaffold_plus") then
-			if core.settings:get("scaffold_plus.mode") == "Silent" then
-				core.update_infotext("ScaffoldPlus", "World", "scaffold_plus", "Silent")
-			else
-				core.update_infotext("ScaffoldPlus", "World", "scaffold_plus", "Blatant")
+	end
+
+	core.cheats[def.category] = core.cheats[def.category] or {}
+	core.cheats[def.category][def.name] = def.setting or def.func
+
+	return def
+end
+
+-- Profile management
+function core.save_cheat_profile(name)
+	local enabled = {}
+	for setting, def in pairs(core.cheat_defs) do
+		if core.settings:get_bool(setting) then
+			table.insert(enabled, setting)
+		end
+	end
+	core.settings:set("cheat_profile_" .. name, table.concat(enabled, ","))
+	local list = core.settings:get("cheat_profile_names") or ""
+	local names = {}
+	for n in list:gmatch("[^,]+") do
+		if n ~= name then table.insert(names, n) end
+	end
+	table.insert(names, name)
+	core.settings:set("cheat_profile_names", table.concat(names, ","))
+	core.settings:write()
+end
+
+function core.load_cheat_profile(name)
+	local data = core.settings:get("cheat_profile_" .. name)
+	if not data or data == "" then return false end
+	local profiled = {}
+	for setting in data:gmatch("[^,]+") do
+		profiled[setting] = true
+	end
+	for setting, def in pairs(core.cheat_defs) do
+		core.settings:set_bool(setting, profiled[setting] == true)
+	end
+	core.settings:write()
+	return true
+end
+
+function core.delete_cheat_profile(name)
+	core.settings:set("cheat_profile_" .. name, "")
+	local list = core.settings:get("cheat_profile_names") or ""
+	local names = {}
+	for n in list:gmatch("[^,]+") do
+		if n ~= name then table.insert(names, n) end
+	end
+	core.settings:set("cheat_profile_names", table.concat(names, ","))
+	core.settings:write()
+end
+
+function core.list_cheat_profiles()
+	local list = core.settings:get("cheat_profile_names") or ""
+	local names = {}
+	for n in list:gmatch("[^,]+") do
+		table.insert(names, n)
+	end
+	return names
+end
+
+function core.save_cheat_profile_dialog()
+	local fs = "formspec_version[10]size[6,3]"
+		.. "no_prepend[]"
+		.. "field[0.3,0.8;5.4,0.8;profile_name;Profile name;]"
+		.. "button[0.3,1.8;2.5,0.8;profile_save;Save]"
+		.. "button_exit[3.2,1.8;2.5,0.8;profile_cancel;Cancel]"
+	core.show_formspec("antilua_save_profile", fs)
+end
+
+function core.show_slot_picker(setting)
+	local fs = "formspec_version[10]size[6,5]"
+		.. "no_prepend[]label[0.3,0.2;Select slot for " .. core.formspec_escape(setting) .. "]"
+	for i = 1, 9 do
+		local assigned = core.settings:get("cheat_slot_" .. i)
+		local label = (assigned == setting) and ("[x] Slot " .. i) or ("[ ] Slot " .. i)
+		local row = math.floor((i - 1) / 3)
+		local col = (i - 1) % 3
+		fs = fs .. "button[" .. (col * 2) .. "," .. (row * 0.7 + 0.7) .. ";1.8,0.6;slot_" .. i .. ";" .. core.formspec_escape(label) .. "]"
+	end
+	fs = fs .. "button_exit[0.3," .. (3.5) .. ";5.4,0.8;slot_done;Done]"
+	core.show_formspec("antilua_slot_picker:" .. setting, fs)
+end
+
+core.register_on_formspec_input(function(formname, fields)
+	local toggle_mode = core.settings:get_bool("cheat_menu_toggle_mode")
+
+	-- Reopen cheat menu when a cheat-related formspec is closed
+	local function reopen_on_quit()
+		if fields.quit then
+			core.after(0.05, function()
+				core.cheat_menu_set_visible(toggle_mode)
+			end)
+		end
+	end
+
+	-- Save profile dialog
+	if formname == "antilua_save_profile" then
+		reopen_on_quit()
+		if fields.profile_save then
+			local name = fields.profile_name
+			if name and #name > 0 then
+				core.save_cheat_profile(name)
+				ws.notify("Profile '" .. name .. "' saved.", ws.NOTIFY_INFO)
 			end
 		end
-    end
+		return true
+	end
+
+	-- Slot picker
+	local slot_prefix = "antilua_slot_picker:"
+	if formname:sub(1, #slot_prefix) == slot_prefix then
+		reopen_on_quit()
+		local setting = formname:sub(#slot_prefix + 1)
+		for i = 1, 9 do
+			if fields["slot_" .. i] then
+				local current = core.settings:get("cheat_slot_" .. i)
+				if current == setting then
+					core.settings:set("cheat_slot_" .. i, "")
+				else
+					core.settings:set("cheat_slot_" .. i, setting)
+				end
+				core.show_slot_picker(setting)
+				return true
+			end
+		end
+		return true
+	end
+
+	-- Cheat settings formspec (opened from gear icon or context menu)
+	if formname:find("^cheat_settings:") == 1 then
+		reopen_on_quit()
+		return false
+	end
+end)
+
+-- Chat command for profile management
+core.register_chatcommand("profile", {
+	params = "save|load|list|delete [name]",
+	description = "Manage cheat profiles",
+	func = function(param)
+		param = param or ""
+		local parts = {}
+		for p in param:gmatch("%S+") do
+			table.insert(parts, p)
+		end
+		local cmd = parts[1]
+		if not cmd then
+			return false, "Usage: .profile save|load|list|delete [name]"
+		end
+		if cmd == "save" then
+			local pname = parts[2]
+			if not pname then
+				return false, "Usage: .profile save <name>"
+			end
+			core.save_cheat_profile(pname)
+			return true, "Profile '" .. pname .. "' saved."
+		elseif cmd == "load" then
+			local pname = parts[2]
+			if not pname then
+				return false, "Usage: .profile load <name>"
+			end
+			if core.load_cheat_profile(pname) then
+				return true, "Profile '" .. pname .. "' loaded."
+			else
+				return false, "Profile '" .. pname .. "' not found."
+			end
+		elseif cmd == "list" then
+			local profiles = core.list_cheat_profiles()
+			if #profiles == 0 then
+				return true, "No saved profiles."
+			end
+			return true, "Profiles: " .. table.concat(profiles, ", ")
+		elseif cmd == "delete" then
+			local pname = parts[2]
+			if not pname then
+				return false, "Usage: .profile delete <name>"
+			end
+			core.delete_cheat_profile(pname)
+			return true, "Profile '" .. pname .. "' deleted."
+		else
+			return false, "Unknown command: " .. cmd .. ". Use save|load|list|delete."
+		end
+	end,
+})
+
+-- Movement cheats
+core.register_cheat({ name = "Freecam", category = "Movement", setting = "freecam",
+	description = "Detach camera for free movement" })
+core.register_cheat({ name = "Freelook", category = "Movement", setting = "freelook",
+	description = "Look around freely while moving" })
+core.register_cheat({ name = "AutoForward", category = "Movement", setting = "continuous_forward",
+	description = "Automatically move forward" })
+core.register_cheat({ name = "PitchMove", category = "Movement", setting = "pitch_move",
+	description = "Move in the direction you are looking" })
+core.register_cheat({ name = "AutoJump", category = "Movement", setting = "autojump",
+	description = "Automatically jump when hitting obstacles" })
+core.register_cheat({ name = "Jesus", category = "Movement", setting = "jesus",
+	description = "Walk on liquids",
+	conflicts_with = { "spider", "jetpack", "freecam" } })
+core.register_cheat({ name = "NoSlow", category = "Movement", setting = "no_slow",
+	description = "Prevent movement speed reduction" })
+core.register_cheat({ name = "JetPack", category = "Movement", setting = "jetpack",
+	description = "Fly upward by holding the jump key",
+	conflicts_with = { "jesus", "spider", "freecam" } })
+core.register_cheat({ name = "AntiSlip", category = "Movement", setting = "antislip",
+	description = "Prevent slipping on slippery surfaces" })
+core.register_cheat({ name = "AirJump", category = "Movement", setting = "airjump",
+	description = "Jump while in mid-air",
+	conflicts_with = { "jesus", "spider" } })
+core.register_cheat({ name = "Spider", category = "Movement", setting = "spider",
+	description = "Climb walls like a spider",
+	conflicts_with = { "jesus", "jetpack", "freecam" } })
+core.register_cheat({ name = "EntitySpeed", category = "Movement", setting = "entity_speed",
+	description = "Increase entity movement speed" })
+
+-- Combat cheats
+core.register_cheat({ name = "AntiKnockback", category = "Combat", setting = "antiknockback",
+	description = "Prevent knockback from attacks" })
+core.register_cheat({ name = "AttachmentFloat", category = "Combat", setting = "float_above_parent",
+	description = "Float above attached parent" })
+core.register_cheat({ name = "AutoHit", category = "Combat", setting = "autohit",
+	description = "Automatically attack nearby entities" })
+
+-- Render cheats
+core.register_cheat({ name = "Xray", category = "Render", setting = "xray",
+	description = "See ores and nodes through walls" })
+core.register_cheat({ name = "Fullbright", category = "Render", setting = "fullbright",
+	description = "Brighten surfaces to a configurable minimum light level",
+	cheat_settings = {
+		min_level = { type = "int", default = 15, min = 0, max = 15 },
+	} })
+core.register_cheat({ name = "HUDBypass", category = "Render", setting = "hud_flags_bypass",
+	description = "Bypass HUD flags set by the server" })
+core.register_cheat({ name = "NoHurtCam", category = "Render", setting = "no_hurt_cam",
+	description = "Disable hurt camera effects" })
+core.register_cheat({ name = "CheatHUD", category = "Render", setting = "cheat_hud",
+	description = "Show active cheat indicators on screen",
+	cheat_settings = {
+		speed = { type = "number", default = 1.0, min = 0.1, max = 10.0 },
+	} })
+core.register_cheat({ name = "EntityHitboxes", category = "Render", setting = "enable_entity_esp",
+	description = "Highlight entity hitboxes" })
+core.register_cheat({ name = "EntityWallhack", category = "Render", setting = "enable_entity_wallhack",
+	description = "See entities through walls" })
+core.register_cheat({ name = "PlayerHitboxes", category = "Render", setting = "enable_player_esp",
+	description = "Highlight player hitboxes" })
+core.register_cheat({ name = "PlayerWallhack", category = "Render", setting = "enable_player_wallhack",
+	description = "See players through walls" })
+core.register_cheat({ name = "NodeESP", category = "Render", setting = "enable_node_esp",
+	description = "Highlight nodes through walls" })
+core.register_cheat({ name = "BigMap", category = "Render",
+	func = function() core.al_bigmap:toggle() end,
+	description = "Open the client-side big map" })
+
+-- Player cheats
+core.register_cheat({ name = "FastDig", category = "Player", setting = "fastdig",
+	description = "Dig nodes faster" })
+core.register_cheat({ name = "FastPlace", category = "Player", setting = "fastplace",
+	description = "Place nodes faster" })
+core.register_cheat({ name = "AutoDig", category = "Player", setting = "autodig",
+	description = "Automatically dig pointed node" })
+core.register_cheat({ name = "AutoPlace", category = "Player", setting = "autoplace",
+	description = "Automatically place selected node" })
+core.register_cheat({ name = "InstantBreak", category = "Player", setting = "instant_break",
+	description = "Break nodes instantly" })
+core.register_cheat({ name = "FastHit", category = "Player", setting = "spamclick",
+	description = "Hit entities at maximum speed" })
+core.register_cheat({ name = "NoFallDamage", category = "Player", setting = "prevent_natural_damage",
+	description = "Prevent fall damage" })
+core.register_on_damage_sending(function(amount)
+	if core.settings:get_bool("prevent_natural_damage") then
+		return true
+	end
+end)
+core.register_cheat({ name = "NoForceRotate", category = "Player", setting = "no_force_rotate",
+	description = "Prevent forced rotation by server" })
+core.register_cheat({ name = "Reach", category = "Player", setting = "reach",
+	description = "Extend interaction range beyond normal tool range",
+	cheat_settings = {
+		range = { type = "number", default = 6.6, min = 1.0, max = 100.0 },
+	} })
+core.register_cheat({ name = "PointAll", category = "Player", setting = "point_all",
+	description = "Point at any reachable node or entity" })
+core.register_cheat({ name = "PrivBypass", category = "Player", setting = "priv_bypass",
+	description = "Bypass server privilege restrictions" })
+core.register_cheat({ name = "AutoRespawn", category = "Player", setting = "autorespawn",
+	description = "Automatically respawn on death" })
+core.register_cheat({ name = "ThroughWalls", category = "Player", setting = "dont_point_nodes",
+	description = "Point through walls at blocked nodes" })
+
+function core.show_cheat_settings_form(setting, use_auto)
+	local def = core.cheat_defs[setting]
+	if not def then return end
+
+	-- Custom formspec via get_formspec field
+	if def.get_formspec and not use_auto then
+		local fs = def.get_formspec(setting)
+		if fs then
+			core.show_formspec("cheat_settings:" .. setting .. ":custom",
+				"formspec_version[10]" .. fs)
+			return
+		end
+	end
+
+	-- Auto-generated formspec from cheat_settings
+	if not def.cheat_settings then return end
+	if not next(def.cheat_settings) then return end
+
+	local keys = {}
+	for k, _ in pairs(def.cheat_settings) do
+		table.insert(keys, k)
+	end
+	table.sort(keys)
+
+	-- Calculate form height: each dropdown row is taller (label + dropdown)
+	local form_h = 2
+	for _, key in ipairs(keys) do
+		local spec = def.cheat_settings[key]
+		if (spec.type == "string" and spec.options) or (spec.type == "enum" and spec.values) then
+			form_h = form_h + 1.5
+		else
+			form_h = form_h + 1.1
+		end
+	end
+	form_h = form_h + 1.3
+
+	local fs = "formspec_version[10]size[5," .. form_h .. ",true]"
+	local theme_bg = core.settings:get("theme_bg") or "#121212"
+	fs = fs .. "padding[0.5,0.5]no_prepend[]bgcolor[" .. theme_bg .. ";true]"
+	fs = fs .. "label[0,0.3;" .. core.formspec_escape(def.name) .. " Settings]"
+	local y = 1
+	for _, key in ipairs(keys) do
+		local spec = def.cheat_settings[key]
+		local full = setting .. "." .. key
+		if spec.type == "bool" then
+			fs = fs .. "checkbox[0.3," .. y .. ";" .. full .. ";" .. key .. ";"
+				.. (core.settings:get_bool(full) and "true" or "false") .. "]"
+			y = y + 1.1
+		elseif spec.type == "number" then
+			fs = fs .. "field[0.3," .. y .. ";4.4,0.8;" .. full .. ";" .. key .. ";"
+				.. (core.settings:get(full) or tostring(spec.default)) .. "]"
+			y = y + 1.1
+		elseif (spec.type == "string" and spec.options) or (spec.type == "enum" and spec.values) then
+			local items = spec.options or spec.values
+			local display = spec.labels or items
+			local current = core.settings:get(full) or tostring(spec.default)
+			local selected = 1
+			for i, opt in ipairs(items) do
+				if opt == current then selected = i; break end
+			end
+			fs = fs .. "label[0.3," .. y .. ";" .. core.formspec_escape(key) .. "]"
+			fs = fs .. "dropdown[0.3," .. (y + 0.35) .. ";4.4,0.7;" .. full .. ";"
+				.. table.concat(display, ",") .. ";" .. selected .. "]"
+			y = y + 1.5
+		else
+			fs = fs .. "field[0.3," .. y .. ";4.4,0.8;" .. full .. ";"
+				.. key .. ";" .. (core.settings:get(full) or tostring(spec.default)) .. "]"
+			y = y + 1.1
+		end
+	end
+	fs = fs .. "button[0.5," .. (y + 0.3) .. ";1.5,0.8;__help;?]"
+	fs = fs .. "button_exit[3," .. (y + 0.3) .. ";2,0.8;;Save]"
+
+	core.show_formspec("cheat_settings:" .. setting, fs)
+end
+
+core.register_on_formspec_input(function(formname, fields)
+	if formname:find("cheat_settings:") ~= 1 then return end
+
+	-- Detect the __cheat_settings__ button from a custom formspec
+	if fields.__cheat_settings__ then
+		local setting
+		if formname:find(":custom$") then
+			setting = formname:sub(16, -8)
+		else
+			setting = formname:sub(16)
+		end
+		core.show_cheat_settings_form(setting, true)
+		return
+	end
+
+	-- Help button — open the relevant README
+	if fields.__help then
+		local setting
+		if formname:find(":custom$") then
+			setting = formname:sub(16, -8)
+		else
+			setting = formname:sub(16)
+		end
+		if core.show_cheat_help then
+			core.show_cheat_help(setting)
+		end
+		return
+	end
+
+	local setting = formname:sub(16)
+	if formname:find(":custom$") then
+		setting = formname:sub(16, -8)
+	end
+	local def = core.cheat_defs[setting]
+	if not def or not def.cheat_settings then return end
+	local changed = false
+	for full, value in pairs(fields) do
+		if full:find("^" .. setting .. "%.") == 1 then
+			local key = full:sub(#setting + 2)
+			local spec = def.cheat_settings[key]
+			if spec then
+				if spec.type == "bool" then
+					core.settings:set_bool(full, value == "true")
+				else
+					-- Dropdowns submit the displayed item text; map a friendly
+					-- label back to the stored value when labels are provided.
+					local store = value
+					local source = spec.values or spec.options
+					if spec.labels and source then
+						for i, v in ipairs(source) do
+							if (spec.labels[i] or tostring(v)) == value then
+								store = tostring(v)
+								break
+							end
+						end
+					end
+					core.settings:set(full, store)
+				end
+				changed = true
+			end
+		end
+	end
+	if changed then
+		core.settings:write()
+	end
+end)
+
+-- Quick Access Palette (opened with ~)
+-- Providers generate entries for the palette; actions are run when an entry
+-- referencing them is activated. Registration is tracked per mod so the
+-- registrations are purged and re-created cleanly on mod reload / DTE edits.
+
+core.quick_menu_providers = {}
+core.quick_menu_actions = {}
+
+local quick_menu_origin = function()
+	return core.get_current_modname() or "??"
+end
+
+function core.register_quick_menu_provider(func)
+	if type(func) ~= "function" then
+		error("register_quick_menu_provider: expected function, got " .. type(func), 2)
+	end
+	core.quick_menu_providers[#core.quick_menu_providers + 1] = {
+		func = func,
+		mod = quick_menu_origin(),
+	}
+end
+
+function core.register_quick_menu_action(id, func)
+	if type(id) ~= "string" then
+		error("register_quick_menu_action: id must be a string", 2)
+	end
+	if type(func) ~= "function" then
+		error("register_quick_menu_action: expected function, got " .. type(func), 2)
+	end
+	core.quick_menu_actions[id] = {
+		func = func,
+		mod = quick_menu_origin(),
+	}
+end
+
+function core.unregister_quick_menu_action(id)
+	core.quick_menu_actions[id] = nil
+end
+
+function core.quick_menu_purge_mod(modname)
+	local cleaned = 0
+	for i = #core.quick_menu_providers, 1, -1 do
+		if core.quick_menu_providers[i].mod == modname then
+			table.remove(core.quick_menu_providers, i)
+			cleaned = cleaned + 1
+		end
+	end
+	for id, def in pairs(core.quick_menu_actions) do
+		if def.mod == modname then
+			core.quick_menu_actions[id] = nil
+			cleaned = cleaned + 1
+		end
+	end
+	return cleaned
+end
+
+-- Built-in quick menu entries
+core.register_quick_menu_action("quickmenu_toggle_esp", function()
+	local esp = {
+		"enable_entity_esp", "enable_entity_wallhack", "enable_entity_tracers",
+		"enable_player_esp", "enable_player_wallhack", "enable_player_tracers",
+	}
+	for _, setting in ipairs(esp) do
+		core.settings:set_bool(setting, not core.settings:get_bool(setting))
+	end
+end)
+
+core.register_quick_menu_provider(function()
+	return {
+		{ label = "Screenshot", action = function() core.make_screenshot() end },
+		{ label = "Reset Camera Roll", action = function()
+			if core.localplayer then
+				core.localplayer:set_roll(0)
+			end
+		end },
+		{ label = "Toggle Xray", toggle = "xray" },
+		{ label = "Toggle Fullbright", toggle = "fullbright" },
+		{ label = "Toggle Freecam", toggle = "freecam" },
+		{ label = "Toggle NoFall", toggle = "prevent_natural_damage" },
+		{ label = "Toggle All ESP", action_id = "quickmenu_toggle_esp" },
+	}
 end)

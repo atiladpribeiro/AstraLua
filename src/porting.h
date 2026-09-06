@@ -1,4 +1,4 @@
-// Luanti
+// Antilua
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
@@ -13,11 +13,11 @@
 #endif
 
 // Be mindful of what you include here!
+#include <csignal>
 #include <string>
 #include "config.h"
 #include "irrlichttypes.h" // u64
 #include "debug.h"
-#include "constants.h"
 #include "util/timetaker.h" // TimePrecision
 
 #ifdef _MSC_VER
@@ -75,9 +75,25 @@ namespace porting
 */
 
 void signal_handler_init();
+
+// Check if a process with the given PID is alive.
+inline bool pid_alive(int pid)
+{
+#ifdef _WIN32
+	HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!h)
+		return false;
+	DWORD exit_code;
+	bool alive = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
+	CloseHandle(h);
+	return alive;
+#else
+	return kill(pid, 0) == 0;
+#endif
+}
 // Returns a pointer to a bool.
 // When the bool is true, program should quit.
-[[nodiscard]] bool *signal_handler_killstatus();
+[[nodiscard]] volatile std::sig_atomic_t *signal_handler_killstatus();
 
 /*
 	Path of static data directory.
@@ -91,6 +107,7 @@ extern std::string path_share;
 	Mac: "~/Library/Application Support/<PROJECT_NAME>"
 */
 extern std::string path_user;
+void applyCompatPaths();
 
 /*
 	Path to gettext locale files
@@ -125,6 +142,12 @@ void initializePaths();
 */
 const std::string &get_sysinfo();
 
+
+/*
+	Return size of system RAM in MB
+	(or 0 if unavailable/error)
+*/
+u32 getMemorySizeMB();
 
 // Monotonic timer
 

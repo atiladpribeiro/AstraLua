@@ -1,0 +1,70 @@
+function sort_pos(pos1, pos2)
+	return {
+		x = math.min(pos1.x, pos2.x),
+		y = math.min(pos1.y, pos2.y),
+		z = math.min(pos1.z, pos2.z),
+	}, {
+		x = math.max(pos1.x, pos2.x),
+		y = math.max(pos1.y, pos2.y),
+		z = math.max(pos1.z, pos2.z),
+	}
+end
+
+function schembuilder_serialize(pos1, pos2)
+	pos1, pos2 = sort_pos(pos1, pos2)
+	local get_node = core.get_node_or_nil
+
+	-- Build a schematic table for core.serialize_schematic
+	local schem = {
+		size = {x = pos2.x - pos1.x + 1, y = pos2.y - pos1.y + 1, z = pos2.z - pos1.z + 1},
+		data = {},
+	}
+	local count = 0
+	local idx = 1
+	local pos_iter = vector.new(pos1.x, 0, 0)
+	while pos_iter.x <= pos2.x do
+		pos_iter.y = pos1.y
+		while pos_iter.y <= pos2.y do
+			pos_iter.z = pos1.z
+			while pos_iter.z <= pos2.z do
+				local node = get_node(pos_iter)
+				if node.name ~= "air" and node.name ~= "ignore" then
+					count = count + 1
+					schem.data[idx] = {
+						name = node.name,
+						prob = node.param1 ~= 0 and node.param1 * 2 or 254,
+						param2 = node.param2 or 0,
+					}
+				else
+					schem.data[idx] = {name = "air", prob = 0, param2 = 0}
+				end
+				idx = idx + 1
+				pos_iter.z = pos_iter.z + 1
+			end
+			pos_iter.y = pos_iter.y + 1
+		end
+		pos_iter.x = pos_iter.x + 1
+	end
+
+	return schem, count
+end
+
+core.register_chatcommand("ssave", {
+	params = "[name]",
+	description = "Save the current region to data/schematics/<name>.mts",
+	func = function(param)
+		if schembuilder.pos1 ~= nil and schembuilder.pos2 ~= nil then
+			local name = param ~= "" and param or ("build_" .. os.date("%Y%m%d_%H%M%S"))
+			local schem, count = schembuilder_serialize(schembuilder.pos1, schembuilder.pos2)
+			local mts_data = core.serialize_schematic(schem, "mts")
+			local filepath = core.get_data_path() .. "schematics/" .. name .. ".mts"
+			local ok = core.write_file(filepath, mts_data)
+			if ok then
+				core.settings:set("schembuilder_output", "file:" .. filepath)
+				ws.notify("Saved " .. count .. " nodes to " .. filepath, ws.NOTIFY_INFO)
+			else
+				ws.notify("Failed to write " .. filepath, ws.NOTIFY_ERROR)
+			end
+		end
+	end,
+})

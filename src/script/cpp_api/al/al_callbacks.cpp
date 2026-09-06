@@ -1,0 +1,1537 @@
+// Antilua
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+#include "al_callbacks.h"
+#include "../s_internal.h"
+#include "lua_api/l_base.h"
+#include "client/client.h"
+#include "client/al_bigmap.h"
+#include "client/render/al_screenshot.h"
+#include "common/c_converter.h"
+#include "common/c_content.h"
+#include "client/localplayer.h"
+#include "network/clientopcodes.h"
+#include "network/networkprotocol.h"
+#include "particles.h"
+#include "sound_spec.h"
+#include "lighting.h"
+#include "nodedef.h"
+#include "constants.h"
+#include "util/numeric.h"
+
+// ---------------------------------------------------------------------------
+// Phase 1a: Wire dead callbacks
+// ---------------------------------------------------------------------------
+
+void AlScriptApi::push_movement_table(LocalPlayer *player)
+{
+	lua_State *L = getStack();
+	lua_newtable(L);
+	lua_pushnumber(L, player->movement_acceleration_default); lua_setfield(L, -2, "acceleration_default");
+	lua_pushnumber(L, player->movement_acceleration_air); lua_setfield(L, -2, "acceleration_air");
+	lua_pushnumber(L, player->movement_acceleration_fast); lua_setfield(L, -2, "acceleration_fast");
+	lua_pushnumber(L, player->movement_speed_walk); lua_setfield(L, -2, "speed_walk");
+	lua_pushnumber(L, player->movement_speed_crouch); lua_setfield(L, -2, "speed_crouch");
+	lua_pushnumber(L, player->movement_speed_fast); lua_setfield(L, -2, "speed_fast");
+	lua_pushnumber(L, player->movement_speed_climb); lua_setfield(L, -2, "speed_climb");
+	lua_pushnumber(L, player->movement_speed_jump); lua_setfield(L, -2, "speed_jump");
+	lua_pushnumber(L, player->movement_liquid_fluidity); lua_setfield(L, -2, "liquid_fluidity");
+	lua_pushnumber(L, player->movement_liquid_fluidity_smooth); lua_setfield(L, -2, "liquid_fluidity_smooth");
+	lua_pushnumber(L, player->movement_liquid_sink); lua_setfield(L, -2, "liquid_sink");
+	lua_pushnumber(L, player->movement_gravity); lua_setfield(L, -2, "gravity");
+}
+
+void AlScriptApi::on_receive_physics_override(LocalPlayer *player)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_receive_physics_override");
+	push_movement_table(player);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+bool AlScriptApi::on_play_sound(const SoundSpec &spec, SoundLocation type,
+		v3f pos, u16 object_id, bool ephemeral, s32 server_id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_play_sound");
+
+	lua_newtable(L);
+	lua_pushstring(L, spec.name.c_str()); lua_setfield(L, -2, "name");
+	lua_pushnumber(L, spec.gain); lua_setfield(L, -2, "gain");
+	lua_pushinteger(L, (int)type); lua_setfield(L, -2, "type");
+	push_v3f(L, pos); lua_setfield(L, -2, "pos");
+	lua_pushinteger(L, object_id); lua_setfield(L, -2, "object_id");
+	lua_pushboolean(L, spec.loop); lua_setfield(L, -2, "loop");
+	lua_pushnumber(L, spec.fade); lua_setfield(L, -2, "fade");
+	lua_pushnumber(L, spec.pitch); lua_setfield(L, -2, "pitch");
+	lua_pushboolean(L, ephemeral); lua_setfield(L, -2, "ephemeral");
+	lua_pushnumber(L, spec.start_time); lua_setfield(L, -2, "start_time");
+	lua_pushinteger(L, server_id); lua_setfield(L, -2, "server_id");
+
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_stop_sound(s32 server_id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_stop_sound");
+	lua_pushinteger(L, server_id);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_fade_sound(s32 sound_id, float step, float gain)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_fade_sound");
+	lua_pushinteger(L, sound_id);
+	lua_pushnumber(L, step);
+	lua_pushnumber(L, gain);
+	try {
+		runCallbacks(3, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_delete_particlespawner(u32 server_id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_delete_particlespawner");
+	lua_pushinteger(L, server_id);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+void AlScriptApi::on_hud_flags_changed()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_hud_flags_changed");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+ZoomFovHookResult AlScriptApi::on_zoom_fov_changed(u16 id, float new_zoom_fov)
+{
+	ZoomFovHookResult result;
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_zoom_fov_changed");
+	lua_pushinteger(L, id);
+	lua_pushnumber(L, new_zoom_fov);
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+		int type = lua_type(L, -1);
+		if (type == LUA_TBOOLEAN && lua_toboolean(L, -1)) {
+			result.blocked = true;
+		} else if (type == LUA_TNUMBER) {
+			result.override = true;
+			result.applied = lua_tonumber(L, -1);
+		}
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+	return result;
+}
+
+void AlScriptApi::on_hud_param_changed(u16 param, const std::string &value)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_hud_param_changed");
+	lua_pushinteger(L, param);
+	lua_pushstring(L, value.c_str());
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_inventory_action()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_inventory_action");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_inventory_update()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_inventory_update");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+static void push_stringmap(lua_State *L, const StringMap &map)
+{
+	lua_newtable(L);
+	for (const auto &[key, val] : map) {
+		lua_pushstring(L, val.c_str());
+		lua_setfield(L, -2, key.c_str());
+	}
+}
+
+void AlScriptApi::on_nodemetadata_change(const std::vector<NodeMetaChange> &changes)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_nodemetadata_change");
+
+	lua_newtable(L);
+	int idx = 1;
+	for (const auto &change : changes) {
+		lua_newtable(L);
+
+		push_v3s16(L, change.pos);
+		lua_setfield(L, -2, "pos");
+
+		push_stringmap(L, change.old_strings);
+		lua_setfield(L, -2, "old");
+
+		push_stringmap(L, change.new_strings);
+		lua_setfield(L, -2, "new");
+
+		lua_rawseti(L, -2, idx++);
+	}
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_sky_changed()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_sky_changed");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_clouds_changed()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_clouds_changed");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+bool AlScriptApi::on_spawn_particle(const ParticleParameters &p)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_spawn_particle");
+
+	lua_newtable(L);
+	push_v3f(L, p.pos); lua_setfield(L, -2, "pos");
+	push_v3f(L, p.vel); lua_setfield(L, -2, "vel");
+	push_v3f(L, p.acc); lua_setfield(L, -2, "acc");
+	lua_pushnumber(L, p.expirationtime); lua_setfield(L, -2, "expiration_time");
+	lua_pushnumber(L, p.size); lua_setfield(L, -2, "size");
+	lua_pushboolean(L, p.collisiondetection); lua_setfield(L, -2, "collisiondetection");
+	lua_pushstring(L, p.texture.string.c_str()); lua_setfield(L, -2, "texture");
+
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_receive_particlespawner(
+		const ParticleSpawnerParameters &p, u32 server_id, u16 attached_id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_receive_particlespawner");
+
+	lua_newtable(L);
+	lua_pushinteger(L, p.amount); lua_setfield(L, -2, "amount");
+	lua_pushnumber(L, p.time); lua_setfield(L, -2, "time");
+	lua_pushinteger(L, server_id); lua_setfield(L, -2, "id");
+	lua_pushinteger(L, attached_id); lua_setfield(L, -2, "attached_id");
+
+	push_v3f(L, p.pos.start.min); lua_setfield(L, -2, "minpos");
+	push_v3f(L, p.pos.start.max); lua_setfield(L, -2, "maxpos");
+	push_v3f(L, p.vel.start.min); lua_setfield(L, -2, "minvel");
+	push_v3f(L, p.vel.start.max); lua_setfield(L, -2, "maxvel");
+	push_v3f(L, p.acc.start.min); lua_setfield(L, -2, "minacc");
+	push_v3f(L, p.acc.start.max); lua_setfield(L, -2, "maxacc");
+	lua_pushstring(L, p.texture.string.c_str()); lua_setfield(L, -2, "texture");
+	lua_pushboolean(L, p.collisiondetection); lua_setfield(L, -2, "collisiondetection");
+	lua_pushboolean(L, p.vertical); lua_setfield(L, -2, "vertical");
+
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_sending_inventory_fields(const std::string &formname,
+		const StringMap &fields)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_sending_inventory_fields");
+	lua_pushstring(L, formname.c_str());
+	lua_newtable(L);
+	for (const auto &[key, val] : fields) {
+		lua_pushstring(L, val.c_str());
+		lua_setfield(L, -2, key.c_str());
+	}
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_sending_nodemeta_fields(const std::string &formname,
+		const StringMap &fields)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_sending_nodemeta_fields");
+	lua_pushstring(L, formname.c_str());
+	lua_newtable(L);
+	for (const auto &[key, val] : fields) {
+		lua_pushstring(L, val.c_str());
+		lua_setfield(L, -2, key.c_str());
+	}
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+void AlScriptApi::on_detached_inventory_update(const std::string &name, bool keep)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_detached_inventory_update");
+	lua_pushstring(L, name.c_str());
+	lua_pushboolean(L, keep);
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+std::string AlScriptApi::on_receiving_inventory_form(const std::string &formname,
+		const std::string &formspec)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_receiving_inventory_form");
+	lua_remove(L, -2); // pop 'core'
+
+	if (lua_type(L, -1) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return formspec;
+	}
+
+	// Chain: each callback receives the output of the previous one
+	std::string current = formspec;
+
+	lua_pushnil(L);
+	while (lua_next(L, -2) != 0) {
+		if (lua_type(L, -1) == LUA_TFUNCTION) {
+			PUSH_ERROR_HANDLER(L);
+			lua_pushvalue(L, -2); // copy function
+			lua_pushstring(L, formname.c_str());
+			lua_pushlstring(L, current.data(), current.size());
+
+			if (lua_pcall(L, 2, 1, -4) == 0) {
+				if (lua_type(L, -1) == LUA_TSTRING)
+					current = lua_tostring(L, -1);
+				lua_pop(L, 1); // pop return value
+			} else {
+				lua_pop(L, 1); // pop error message
+			}
+			lua_pop(L, 1); // pop error handler
+		}
+		lua_pop(L, 1); // pop value (function or non-function)
+	}
+	lua_pop(L, 1); // pop table
+
+	return current;
+}
+
+std::string AlScriptApi::on_open_nodemeta_form(v3s16 pos, const std::string &formspec)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_open_nodemeta_form");
+	lua_remove(L, -2); // pop 'core'
+
+	if (lua_type(L, -1) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return formspec;
+	}
+
+	// Chain: each callback receives the output of the previous one
+	std::string current = formspec;
+
+	lua_pushnil(L);
+	while (lua_next(L, -2) != 0) {
+		if (lua_type(L, -1) == LUA_TFUNCTION) {
+			PUSH_ERROR_HANDLER(L);
+			lua_pushvalue(L, -2); // copy function
+			push_v3s16(L, pos);
+			lua_pushlstring(L, current.data(), current.size());
+
+			if (lua_pcall(L, 2, 1, -4) == 0) {
+				// boolean true = cancel
+				if (lua_isboolean(L, -1) && lua_toboolean(L, -1)) {
+					lua_pop(L, 5); // result + err + value + key + table
+					return "";
+				}
+				if (lua_type(L, -1) == LUA_TSTRING) {
+					const char *s = lua_tostring(L, -1);
+					if (s)
+						current = s;
+				}
+				lua_pop(L, 1); // pop return value
+			} else {
+				lua_pop(L, 1); // pop error message
+			}
+			lua_pop(L, 1); // pop error handler
+		}
+		lua_pop(L, 1); // pop value (function or non-function)
+	}
+	lua_pop(L, 1); // pop table
+
+	return current;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1b: Moved from ScriptApiClient
+// ---------------------------------------------------------------------------
+
+void AlScriptApi::on_death()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_death");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+bool AlScriptApi::on_object_add(u16 id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_object_add");
+	lua_pushnumber(L, id);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+void AlScriptApi::on_object_hp_change(u16 id, u16 hp)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_object_hp_change");
+	lua_pushnumber(L, id);
+	lua_pushnumber(L, hp);
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_object_properties_change(u16 id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_object_properties_change");
+	lua_pushnumber(L, id);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: New interception callbacks
+// ---------------------------------------------------------------------------
+
+std::string AlScriptApi::on_receiving_formspec(const std::string &formname,
+		const std::string &formspec)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_receiving_formspec");
+	lua_remove(L, -2); // pop 'core'
+
+	if (lua_type(L, -1) != LUA_TTABLE) {
+		lua_pop(L, 1);
+		return formspec;
+	}
+
+	// Chain: each callback receives the output of the previous one
+	std::string current = formspec;
+
+	lua_pushnil(L);
+	while (lua_next(L, -2) != 0) {
+		if (lua_type(L, -1) == LUA_TFUNCTION) {
+			PUSH_ERROR_HANDLER(L);
+			lua_pushvalue(L, -2); // copy function
+			lua_pushstring(L, formname.c_str());
+			lua_pushlstring(L, current.data(), current.size());
+
+			if (lua_pcall(L, 2, 1, -4) == 0) {
+				if (lua_type(L, -1) == LUA_TSTRING)
+					current = lua_tostring(L, -1);
+				lua_pop(L, 1); // pop return value
+			} else {
+				lua_pop(L, 1); // pop error message
+			}
+			lua_pop(L, 1); // pop error handler
+		}
+		lua_pop(L, 1); // pop value (function or non-function)
+	}
+	lua_pop(L, 1); // pop table
+
+	return current;
+}
+
+void AlScriptApi::on_node_add(v3s16 pos, const MapNode &node)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_node_add");
+	push_v3s16(L, pos);
+	pushnode(L, node);
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_node_remove(v3s16 pos)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_node_remove");
+	push_v3s16(L, pos);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+bool AlScriptApi::on_hud_add(u32 server_id, u8 type, const v2f &pos,
+		const std::string &name, const v2f &scale,
+		const std::string &text, u32 number, u32 item,
+		u32 dir, const v2f &align, const v2f &offset,
+		const v3f &world_pos, const v2f &size, s16 z_index,
+		const std::string &text2, u32 style, bool hideable)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_hud_add");
+
+	lua_newtable(L);
+	lua_pushinteger(L, server_id); lua_setfield(L, -2, "server_id");
+	lua_pushinteger(L, type); lua_setfield(L, -2, "type");
+	push_v2f(L, pos); lua_setfield(L, -2, "pos");
+	lua_pushstring(L, name.c_str()); lua_setfield(L, -2, "name");
+	push_v2f(L, scale); lua_setfield(L, -2, "scale");
+	lua_pushstring(L, text.c_str()); lua_setfield(L, -2, "text");
+	lua_pushinteger(L, number); lua_setfield(L, -2, "number");
+	lua_pushinteger(L, item); lua_setfield(L, -2, "item");
+	lua_pushinteger(L, dir); lua_setfield(L, -2, "dir");
+	push_v2f(L, align); lua_setfield(L, -2, "align");
+	push_v2f(L, offset); lua_setfield(L, -2, "offset");
+	push_v3f(L, world_pos); lua_setfield(L, -2, "world_pos");
+	push_v2f(L, size); lua_setfield(L, -2, "size");
+	lua_pushinteger(L, z_index); lua_setfield(L, -2, "z_index");
+	lua_pushstring(L, text2.c_str()); lua_setfield(L, -2, "text2");
+	lua_pushinteger(L, style); lua_setfield(L, -2, "style");
+	lua_pushboolean(L, hideable); lua_setfield(L, -2, "hideable");
+
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_hud_remove(u32 server_id)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_hud_remove");
+	lua_pushinteger(L, server_id);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+bool AlScriptApi::on_hud_change(u32 server_id, HudElementStat stat,
+		const std::string &sdata, const v2f &v2fdata,
+		const v3f &v3fdata, u32 intdata)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_hud_change");
+	lua_pushinteger(L, server_id);
+	lua_pushinteger(L, (int)stat);
+	// Push the appropriate value based on stat type
+	// Callbacks can look at the value they care about
+	lua_pushstring(L, sdata.c_str());
+	push_v2f(L, v2fdata);
+	push_v3f(L, v3fdata);
+	lua_pushinteger(L, intdata);
+	try {
+		runCallbacks(6, RUN_CALLBACKS_MODE_OR_SC);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return true;
+	}
+	return readParam<bool>(L, -1);
+}
+
+float AlScriptApi::on_time_of_day(u16 time, float speed)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_time_of_day");
+	lua_pushinteger(L, time);
+	lua_pushnumber(L, speed);
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return -1.0f;
+	}
+	if (lua_type(L, -1) == LUA_TNUMBER) {
+		float val = lua_tonumber(L, -1);
+		if (val >= 0.0f && val <= 24000.0f)
+			return val;
+	}
+	return -1.0f;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: New notification callbacks
+// ---------------------------------------------------------------------------
+
+void AlScriptApi::on_connect()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_connect");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_disconnect()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_disconnect");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_privileges_changed(const std::set<std::string> &privileges)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_privileges_changed");
+
+	lua_newtable(L);
+	int idx = 1;
+	for (const auto &priv : privileges) {
+		lua_pushstring(L, priv.c_str());
+		lua_rawseti(L, -2, idx++);
+	}
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_breath_changed(u16 breath)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_breath_changed");
+	lua_pushinteger(L, breath);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_player_list_changed(u8 type,
+		const std::vector<std::string> &names)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_player_list_changed");
+	lua_pushinteger(L, type);
+
+	lua_newtable(L);
+	int idx = 1;
+	for (const auto &name : names) {
+		lua_pushstring(L, name.c_str());
+		lua_rawseti(L, -2, idx++);
+	}
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::push_lighting_table(const Lighting &lighting)
+{
+	lua_State *L = getStack();
+	lua_newtable(L);
+	lua_pushnumber(L, lighting.shadow_intensity); lua_setfield(L, -2, "shadow_intensity");
+	lua_pushnumber(L, lighting.saturation); lua_setfield(L, -2, "saturation");
+	lua_pushnumber(L, lighting.exposure.luminance_min); lua_setfield(L, -2, "luminance_min");
+	lua_pushnumber(L, lighting.exposure.luminance_max); lua_setfield(L, -2, "luminance_max");
+	lua_pushnumber(L, lighting.exposure.exposure_correction); lua_setfield(L, -2, "exposure_correction");
+	lua_pushnumber(L, lighting.exposure.speed_dark_bright); lua_setfield(L, -2, "speed_dark_bright");
+	lua_pushnumber(L, lighting.exposure.speed_bright_dark); lua_setfield(L, -2, "speed_bright_dark");
+	lua_pushnumber(L, lighting.exposure.center_weight_power); lua_setfield(L, -2, "center_weight_power");
+	lua_pushnumber(L, lighting.volumetric_light_strength); lua_setfield(L, -2, "volumetric_light_strength");
+	lua_pushinteger(L, lighting.shadow_tint.color); lua_setfield(L, -2, "shadow_tint");
+	lua_pushnumber(L, lighting.bloom_intensity); lua_setfield(L, -2, "bloom_intensity");
+	lua_pushnumber(L, lighting.bloom_strength_factor); lua_setfield(L, -2, "bloom_strength_factor");
+	lua_pushnumber(L, lighting.bloom_radius); lua_setfield(L, -2, "bloom_radius");
+}
+
+void AlScriptApi::on_lighting_changed(const Lighting &lighting)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_lighting_changed");
+	push_lighting_table(lighting);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Game loop hooks
+// ---------------------------------------------------------------------------
+
+void AlScriptApi::on_pre_step(float dtime)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_pre_step");
+	lua_pushnumber(L, dtime);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+void AlScriptApi::on_post_step(float dtime)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_post_step");
+	lua_pushnumber(L, dtime);
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: Raw packet interception
+// ---------------------------------------------------------------------------
+
+RawPacketHookResult AlScriptApi::on_raw_packet_received(u16 command,
+		const std::string &payload)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_receiving_raw_packet");
+	lua_pushinteger(L, command);
+	lua_pushlstring(L, payload.data(), payload.size());
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return {false, {}};
+	}
+	if (lua_type(L, -1) == LUA_TBOOLEAN) {
+		if (lua_toboolean(L, -1))
+			return {true, {}};
+		return {false, {}};
+	}
+	if (lua_type(L, -1) == LUA_TSTRING) {
+		size_t len;
+		const char *s = lua_tolstring(L, -1, &len);
+		if (s)
+			return {false, std::string(s, len)};
+	}
+	return {false, {}};
+}
+
+RawPacketHookResult AlScriptApi::on_raw_packet_sending(u16 command,
+		const std::string &payload)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_sending_raw_packet");
+	lua_pushinteger(L, command);
+	lua_pushlstring(L, payload.data(), payload.size());
+	try {
+		runCallbacks(2, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+		return {false, {}};
+	}
+	if (lua_type(L, -1) == LUA_TBOOLEAN) {
+		if (lua_toboolean(L, -1))
+			return {true, {}};
+		return {false, {}};
+	}
+	if (lua_type(L, -1) == LUA_TSTRING) {
+		size_t len;
+		const char *s = lua_tolstring(L, -1, &len);
+		if (s)
+			return {false, std::string(s, len)};
+	}
+	return {false, {}};
+}
+
+void AlScriptApi::init_raw_packet_api()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	// core.TOCLIENT table
+	lua_getglobal(L, "core");
+	lua_newtable(L);
+	for (u16 i = 0; i < TOCLIENT_NUM_MSG_TYPES; i++) {
+		if (!toClientCommandTable[i].name)
+			continue;
+		const char *name = toClientCommandTable[i].name + 9; // strip "TOCLIENT_"
+		lua_pushinteger(L, i);
+		lua_setfield(L, -2, name);
+	}
+	lua_setfield(L, -2, "TOCLIENT");
+
+	// core.TOSERVER table
+	lua_newtable(L);
+	for (u16 i = 0; i < TOSERVER_NUM_MSG_TYPES; i++) {
+		if (!serverCommandFactoryTable[i].name)
+			continue;
+		const char *name = serverCommandFactoryTable[i].name + 9; // strip "TOSERVER_"
+		lua_pushinteger(L, i);
+		lua_setfield(L, -2, name);
+	}
+	lua_setfield(L, -2, "TOSERVER");
+
+	lua_pop(L, 1); // pop core
+}
+
+bool AlScriptApi::send_raw_packet(u16 command, const std::string &payload)
+{
+	switch (command) {
+	case TOSERVER_INIT:
+	case TOSERVER_INIT2:
+	case TOSERVER_FIRST_SRP:
+	case TOSERVER_SRP_BYTES_A:
+	case TOSERVER_SRP_BYTES_M:
+		return false;
+	default:
+		break;
+	}
+
+	if (command >= TOSERVER_NUM_MSG_TYPES ||
+			!serverCommandFactoryTable[command].name)
+		return false;
+
+	Client *client = getClient();
+	NetworkPacket pkt(command, payload.size());
+	pkt.putRawString(payload.data(), payload.size());
+	client->Send(&pkt);
+	return true;
+}
+
+// core._al_screenshot_scene_only(options, callback)
+// options: { scene_only = bool, path = string }
+// callback: function(filename) — fired after the next rendered frame
+static int l_screenshot_scene_only(lua_State *L)
+{
+	bool scene_only = true;
+	std::string path;
+
+	if (lua_istable(L, 1)) {
+		lua_getfield(L, 1, "scene_only");
+		if (!lua_isnil(L, -1))
+			scene_only = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 1, "path");
+		if (lua_isstring(L, -1))
+			path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+	}
+
+	int callback_ref = LUA_NOREF;
+	if (lua_isfunction(L, 2)) {
+		callback_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	} else if (!lua_isnoneornil(L, 2)) {
+		return luaL_error(L, "second argument must be a function or nil");
+	}
+
+	AlScreenshot::request(scene_only, path, callback_ref);
+	return 0;
+}
+
+void AlScriptApi::init_screenshot_api()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_pushcfunction(L, l_screenshot_scene_only);
+	lua_setfield(L, -2, "_al_screenshot_scene_only");
+	lua_pop(L, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Big map (per-server minimap persistence)
+// ---------------------------------------------------------------------------
+
+static AlBigMap *getBigMap(lua_State *L)
+{
+	return ModApiBase::getClient(L)->getAlBigMap();
+}
+
+static v3s16 bigMapNodeToBlock(s32 x, s32 z)
+{
+	return v3s16(getContainerPos(x, MAP_BLOCKSIZE), 0,
+			getContainerPos(z, MAP_BLOCKSIZE));
+}
+
+static void bigMapSkipSelf(lua_State *L)
+{
+	// Allow both core.al_bigmap:fn(...) and core.al_bigmap.fn(...) syntax.
+	if (lua_istable(L, 1))
+		lua_remove(L, 1);
+}
+
+
+static std::string bigMapReadStringField(lua_State *L, int index,
+		const char *field)
+{
+	std::string value;
+	lua_getfield(L, index, field);
+	if (lua_isstring(L, -1))
+		value = lua_tostring(L, -1);
+	lua_pop(L, 1);
+	return value;
+}
+
+static u16 bigMapReadIntField(lua_State *L, int index, const char *field,
+		u16 def)
+{
+	u16 value = def;
+	lua_getfield(L, index, field);
+	if (lua_isnumber(L, -1))
+		value = (u16)lua_tointeger(L, -1);
+	lua_pop(L, 1);
+	return value;
+}
+
+static int l_bigmap_toggle(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->toggle();
+	return 0;
+}
+
+static int l_bigmap_open(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->open();
+	return 0;
+}
+
+static int l_bigmap_close(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->close();
+	return 0;
+}
+
+static int l_bigmap_is_open(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	lua_pushboolean(L, bm && bm->isOpen());
+	return 1;
+}
+
+static int l_bigmap_set_center(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->setCenterNode(v2s32(luaL_checkinteger(L, 1),
+				luaL_checkinteger(L, 2)));
+	return 0;
+}
+
+static int l_bigmap_get_center(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	v2s32 c = bm->getCenterNode();
+	lua_newtable(L);
+	lua_pushinteger(L, c.X);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, c.Y);
+	lua_setfield(L, -2, "z");
+	return 1;
+}
+
+static int l_bigmap_pan(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->pan(v2s32(luaL_checkinteger(L, 1), luaL_checkinteger(L, 2)));
+	return 0;
+}
+
+static int l_bigmap_set_zoom(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->setZoom(luaL_checknumber(L, 1));
+	return 0;
+}
+
+static int l_bigmap_get_zoom(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	lua_pushnumber(L, bm->getZoom());
+	return 1;
+}
+
+static int l_bigmap_set_follow_player(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->setFollowPlayer(lua_toboolean(L, 1));
+	return 0;
+}
+
+static int l_bigmap_get_follow_player(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	lua_pushboolean(L, bm->getFollowPlayer());
+	return 1;
+}
+
+static int l_bigmap_set_save_enabled(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->setSaveEnabled(lua_toboolean(L, 1));
+	return 0;
+}
+
+static int l_bigmap_get_save_enabled(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	lua_pushboolean(L, bm->getSaveEnabled());
+	return 1;
+}
+
+static int l_bigmap_save(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->save();
+	return 0;
+}
+
+static int l_bigmap_load(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->load();
+	return 0;
+}
+
+static int l_bigmap_clear(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	if (AlBigMap *bm = getBigMap(L))
+		bm->clear();
+	return 0;
+}
+
+static int l_bigmap_get_block_count(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	lua_pushinteger(L, bm->getBlockCount());
+	return 1;
+}
+
+static int l_bigmap_get_save_dir(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	lua_pushstring(L, bm->getSaveDir().c_str());
+	return 1;
+}
+
+static int l_bigmap_get_coverage(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	v3s16 minp, maxp;
+	bm->getCoverage(&minp, &maxp);
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushinteger(L, minp.X * MAP_BLOCKSIZE);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, minp.Z * MAP_BLOCKSIZE);
+	lua_setfield(L, -2, "z");
+	lua_setfield(L, -2, "min");
+	lua_newtable(L);
+	lua_pushinteger(L, (maxp.X + 1) * MAP_BLOCKSIZE - 1);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, (maxp.Z + 1) * MAP_BLOCKSIZE - 1);
+	lua_setfield(L, -2, "z");
+	lua_setfield(L, -2, "max");
+	lua_pushinteger(L, bm->getBlockCount());
+	lua_setfield(L, -2, "count");
+	return 1;
+}
+
+static int l_bigmap_has_block(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	v3s16 bp = bigMapNodeToBlock(luaL_checkinteger(L, 1),
+			luaL_checkinteger(L, 2));
+	lua_pushboolean(L, bm->hasBlock(bp));
+	return 1;
+}
+
+static int l_bigmap_get_pixel(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	std::string name;
+	u8 param2 = 0;
+	u16 height = 0;
+	u16 air = 0;
+	if (!bm->getPixel(v2s32(luaL_checkinteger(L, 1), luaL_checkinteger(L, 2)),
+			&name, &param2, &height, &air))
+		return 0;
+	lua_newtable(L);
+	lua_pushstring(L, name.c_str());
+	lua_setfield(L, -2, "node");
+	lua_pushinteger(L, param2);
+	lua_setfield(L, -2, "param2");
+	lua_pushinteger(L, height);
+	lua_setfield(L, -2, "height");
+	lua_pushinteger(L, air);
+	lua_setfield(L, -2, "air_count");
+	return 1;
+}
+
+static int l_bigmap_set_pixel(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	s32 x = luaL_checkinteger(L, 1);
+	s32 z = luaL_checkinteger(L, 2);
+	luaL_checktype(L, 3, LUA_TTABLE);
+	std::string name = bigMapReadStringField(L, 3, "node");
+	u16 height = bigMapReadIntField(L, 3, "height", 0);
+	u16 air = bigMapReadIntField(L, 3, "air_count", 0);
+	u8 param2 = (u8)bigMapReadIntField(L, 3, "param2", 0);
+	lua_pushboolean(L, bm->setPixel(v2s32(x, z), name, height, air, param2));
+	return 1;
+}
+
+static int l_bigmap_get_block(lua_State *L)
+{
+
+	bigMapSkipSelf(L);	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	v3s16 bp = bigMapNodeToBlock(luaL_checkinteger(L, 1),
+			luaL_checkinteger(L, 2));
+	AlBigMapBlock *block = nullptr;
+	if (!bm->getBlock(bp, &block))
+		return 0;
+
+	const NodeDefManager *ndef = ModApiBase::getClient(L)->getNodeDefManager();
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushinteger(L, bp.X * MAP_BLOCKSIZE);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, bp.Y * MAP_BLOCKSIZE);
+	lua_setfield(L, -2, "y");
+	lua_pushinteger(L, bp.Z * MAP_BLOCKSIZE);
+	lua_setfield(L, -2, "z");
+	lua_setfield(L, -2, "pos");
+	lua_newtable(L);
+	for (u8 zz = 0; zz < MAP_BLOCKSIZE; zz++) {
+		lua_newtable(L);
+		for (u8 xx = 0; xx < MAP_BLOCKSIZE; xx++) {
+			const AlBigMapPixel &p = block->pixels[zz * MAP_BLOCKSIZE + xx];
+			lua_newtable(L);
+			if (ndef) {
+				const std::string &nm = ndef->get(p.param0).name;
+				lua_pushstring(L, nm.c_str());
+			} else {
+				lua_pushnil(L);
+			}
+			lua_setfield(L, -2, "node");
+			lua_pushinteger(L, p.param2);
+			lua_setfield(L, -2, "param2");
+			lua_pushinteger(L, p.height);
+			lua_setfield(L, -2, "height");
+			lua_pushinteger(L, p.air_count);
+			lua_setfield(L, -2, "air_count");
+			lua_rawseti(L, -2, xx + 1);
+		}
+		lua_rawseti(L, -2, zz + 1);
+	}
+	lua_setfield(L, -2, "data");
+	return 1;
+}
+
+// core.al_bigmap.render_section({pos={x,z}, size={x,z}}) -> texture name
+// Also accepts min/max box instead of pos+size. Renders a section of the
+// saved map to a PNG in the big map's images dir and returns a texture name
+// usable in a formspec image element, or nil on failure.
+static int l_bigmap_render_section(lua_State *L)
+{
+	bigMapSkipSelf(L);
+	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	luaL_checktype(L, 1, LUA_TTABLE);
+
+	v3s32 center(0, 0, 0);
+	v3s32 size(0, 0, 0);
+	bool have_center = false;
+
+	// min/max box (optional)
+	lua_getfield(L, 1, "min");
+	if (lua_istable(L, -1)) {
+		center.X = getintfield_default(L, -1, "x", 0);
+		center.Z = getintfield_default(L, -1, "z", 0);
+		have_center = true;
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 1, "max");
+	if (lua_istable(L, -1)) {
+		s32 maxx = getintfield_default(L, -1, "x", center.X);
+		s32 maxz = getintfield_default(L, -1, "z", center.Z);
+		if (have_center) {
+			size.X = maxx - center.X + 1;
+			size.Z = maxz - center.Z + 1;
+			center.X = center.X + size.X / 2;
+			center.Z = center.Z + size.Z / 2;
+		}
+	}
+	lua_pop(L, 1);
+
+	// pos (center) + size (optional override)
+	lua_getfield(L, 1, "pos");
+	if (lua_istable(L, -1)) {
+		center.X = getintfield_default(L, -1, "x", center.X);
+		center.Z = getintfield_default(L, -1, "z", center.Z);
+		have_center = true;
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, 1, "size");
+	if (lua_istable(L, -1)) {
+		size.X = getintfield_default(L, -1, "x", 0);
+		size.Z = getintfield_default(L, -1, "z", 0);
+	}
+	lua_pop(L, 1);
+
+	// Default center to the player position.
+	if (!have_center) {
+		LocalPlayer *player = ModApiBase::getClient(L)->getEnv().getLocalPlayer();
+		if (!player)
+			return 0;
+		v3f p = player->getPosition() / BS;
+		center.X = (s32)std::floor(p.X);
+		center.Z = (s32)std::floor(p.Z);
+	}
+	if (size.X <= 0 || size.Z <= 0)
+		return 0;
+
+	std::string name = bm->renderSectionToImage(center, size);
+	if (name.empty())
+		return 0;
+	lua_pushstring(L, name.c_str());
+	return 1;
+}
+
+static int l_bigmap_clear_images(lua_State *L)
+{
+	bigMapSkipSelf(L);
+	AlBigMap *bm = getBigMap(L);
+	if (!bm)
+		return 0;
+	bm->clearImages();
+	return 0;
+}
+
+void AlScriptApi::init_bigmap_api()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_newtable(L);
+	lua_pushcfunction(L, l_bigmap_toggle);        lua_setfield(L, -2, "toggle");
+	lua_pushcfunction(L, l_bigmap_open);          lua_setfield(L, -2, "open");
+	lua_pushcfunction(L, l_bigmap_close);         lua_setfield(L, -2, "close");
+	lua_pushcfunction(L, l_bigmap_is_open);       lua_setfield(L, -2, "is_open");
+	lua_pushcfunction(L, l_bigmap_set_center);    lua_setfield(L, -2, "set_center");
+	lua_pushcfunction(L, l_bigmap_get_center);    lua_setfield(L, -2, "get_center");
+	lua_pushcfunction(L, l_bigmap_pan);           lua_setfield(L, -2, "pan");
+	lua_pushcfunction(L, l_bigmap_set_zoom);      lua_setfield(L, -2, "set_zoom");
+	lua_pushcfunction(L, l_bigmap_get_zoom);      lua_setfield(L, -2, "get_zoom");
+	lua_pushcfunction(L, l_bigmap_set_follow_player); lua_setfield(L, -2, "set_follow_player");
+	lua_pushcfunction(L, l_bigmap_get_follow_player); lua_setfield(L, -2, "get_follow_player");
+	lua_pushcfunction(L, l_bigmap_set_save_enabled);  lua_setfield(L, -2, "set_save_enabled");
+	lua_pushcfunction(L, l_bigmap_get_save_enabled);  lua_setfield(L, -2, "get_save_enabled");
+	lua_pushcfunction(L, l_bigmap_save);         lua_setfield(L, -2, "save");
+	lua_pushcfunction(L, l_bigmap_load);         lua_setfield(L, -2, "load");
+	lua_pushcfunction(L, l_bigmap_clear);        lua_setfield(L, -2, "clear");
+	lua_pushcfunction(L, l_bigmap_get_block_count); lua_setfield(L, -2, "get_block_count");
+	lua_pushcfunction(L, l_bigmap_get_save_dir); lua_setfield(L, -2, "get_save_dir");
+	lua_pushcfunction(L, l_bigmap_get_coverage); lua_setfield(L, -2, "get_coverage");
+	lua_pushcfunction(L, l_bigmap_has_block);    lua_setfield(L, -2, "has_block");
+	lua_pushcfunction(L, l_bigmap_get_pixel);    lua_setfield(L, -2, "get_pixel");
+	lua_pushcfunction(L, l_bigmap_set_pixel);    lua_setfield(L, -2, "set_pixel");
+	lua_pushcfunction(L, l_bigmap_get_block);    lua_setfield(L, -2, "get_block");
+	lua_pushcfunction(L, l_bigmap_render_section); lua_setfield(L, -2, "render_section");
+	lua_pushcfunction(L, l_bigmap_clear_images);   lua_setfield(L, -2, "clear_images");
+	lua_setfield(L, -2, "al_bigmap");
+	lua_pop(L, 1);
+}
+
+void AlScriptApi::on_bigmap_open()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_bigmap_open");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+	lua_pop(L, 2);
+}
+
+void AlScriptApi::on_bigmap_close()
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_bigmap_close");
+	try {
+		runCallbacks(0, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+	lua_pop(L, 2);
+}
+
+void AlScriptApi::on_bigmap_click(v3s32 pos)
+{
+	SCRIPTAPI_PRECHECKHEADER
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "registered_on_bigmap_click");
+
+	// Positions here are s32 node coords; push the table manually (there is
+	// no push_v3s32 helper).
+	lua_newtable(L);
+	lua_pushinteger(L, pos.X);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, pos.Y);
+	lua_setfield(L, -2, "y");
+	lua_pushinteger(L, pos.Z);
+	lua_setfield(L, -2, "z");
+
+	try {
+		runCallbacks(1, RUN_CALLBACKS_MODE_FIRST);
+	} catch (LuaError &e) {
+		getClient()->setFatalError(e);
+	}
+	lua_pop(L, 2);
+}

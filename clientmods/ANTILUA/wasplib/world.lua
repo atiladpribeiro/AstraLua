@@ -1,0 +1,169 @@
+local function tablearg(arg)
+	local tb = {}
+	if type(arg) == 'string' then
+		tb = {arg}
+	elseif type(arg) == 'table' then
+		tb = arg
+	elseif type(arg) == 'function' then
+		tb = arg()
+	end
+	return tb
+end
+
+function ws.buildable_to(pos)
+	local node = core.get_node_or_nil(pos)
+	if node then
+		return core.get_node_def(node.name).buildable_to
+	end
+end
+
+function ws.tplace(p, n, stay)
+	if not p then return end
+	if n then ws.switch_to_item(n) end
+	local opos = ws.dircoord(0, 0, 0)
+	local tpos = vector.add(p, vector.new(0, 1, 0))
+	core.localplayer:set_pos(tpos)
+	ws.place(p, {n})
+	if not stay then
+		core.after(0.1, function()
+			core.localplayer:set_pos(opos)
+		end)
+	end
+end
+
+core.register_chatcommand("tplace", {
+	description = "tp-place",
+	params = "Y",
+	func = function(param)
+		return ws.tplace(core.string_to_pos(param))
+	end
+})
+
+
+function ws.isnode(pos, arg)
+	local nodename = tablearg(arg)
+	local nd = core.get_node_or_nil(pos)
+	if nd and nodename and ws.in_list(nd.name, nodename) then
+		return true
+	end
+end
+
+function ws.can_place_at(pos)
+	local node = core.get_node_or_nil(pos)
+	return node and (node.name == "air" or (core.get_node_def(node.name) or {}).buildable_to)
+end
+
+function ws.can_place_wielded_at(pos)
+	local wield_empty = core.localplayer:get_wielded_item():is_empty()
+	return not wield_empty and ws.can_place_at(pos)
+end
+
+function ws.find_any_swap(items, hslot)
+	hslot = hslot or 8
+	for i, v in ipairs(items) do
+		local n = core.find_item(v)
+		if n then
+			ws.switch_to_item(v, hslot)
+			return true
+		end
+	end
+	return false
+end
+
+function ws.place(pos, items, hslot, place)
+	if not pos then return end
+	if not ws.can_place_at(pos) then return end
+	items = tablearg(items)
+	place = place or core.place_node
+
+	local node = core.get_node_or_nil(pos)
+	if not node then return end
+	if ws.isnode(pos, items) then
+		return true
+	else
+		if ws.find_any_swap(items, hslot) then
+			place(pos)
+			return true
+		end
+	end
+end
+
+
+function ws.is_diggable(pos)
+	if not pos then return false end
+	local nd = core.get_node_or_nil(pos)
+	if not nd or not nd.name then return false end
+	local n = core.get_node_def(nd.name)
+	if n and n.diggable then return true end
+	return false
+end
+
+function ws.dig(pos, condition, autotool)
+	if autotool == nil then autotool = true end
+	if condition and not condition(pos) then return false end
+	if not ws.is_diggable(pos) then return end
+	if autotool then ws.select_best_tool(pos) end
+	local wear = core.localplayer:get_wielded_item():get_wear()
+	if wear > 60000 then return false end
+	core.dig_node(pos)
+	return true
+end
+
+
+function ws.is_laggy()
+	if tps_client and tps_client.ping and tps_client.ping > 1000 then return true end
+end
+
+function ws.donodes(poss, func, condition)
+	if ws.is_laggy() then return end
+	local dn_i = 0
+	table.shuffle(poss)
+	for k, v in ipairs(poss) do
+		if dn_i > 32 then return end
+		if condition == nil or condition(v) then
+			if func(v) == false then return false end
+			dn_i = dn_i + 1
+		end
+	end
+	return true
+end
+
+function ws.dignodes(poss, condition)
+	return ws.donodes(poss, ws.dig, function(pos)
+		if condition and condition(pos) == false then return false end
+		local n = core.get_node_or_nil(pos)
+		return n and n.name ~= "air" or false
+	end)
+end
+
+function ws.replace(pos, arg)
+	arg = tablearg(arg)
+	local nd = core.get_node_or_nil(pos)
+	if nd and not ws.in_list(nd.name, arg) and ws.buildable_to(pos) then
+		local tm = ws.get_digtime(nd.name) or 0
+		ws.dig(pos)
+		core.after(tm + 0.1, function()
+			ws.place(pos, arg)
+		end)
+		return tm
+	else
+		return ws.place(pos, arg)
+	end
+end
+
+
+
+function ws.find_closest_reachable_airpocket(pos)
+	local lp = ws.dircoord(0, 0, 0)
+	local nds = core.find_nodes_near(lp, 5, {'air'})
+	local odst = 10
+	local rt = lp
+	for k, v in ipairs(nds) do
+		local dst = vector.distance(pos, v)
+		if dst < odst then odst = dst rt = v end
+	end
+	if odst == 10 then return false end
+	return vector.add(rt, vector.new(0, -1.5, 0))
+end
+
+

@@ -1,5 +1,5 @@
 /*
-Dragonfire
+Antilua
 Copyright (C) 2020 system32
 
 This program is free software; you can redistribute it and/or modify
@@ -22,10 +22,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "common/c_converter.h"
 #include "common/c_content.h"
 #include "client/client.h"
+#include "client/content_cao.h"
 #include "object_properties.h"
 #include "util/pointedthing.h"
-
-using object_t = u16;
+#include "activeobject.h"
 
 ClientActiveObject *ClientObjectRef::getClientActiveObject()
 {
@@ -66,45 +66,6 @@ int ClientObjectRef::l_get_pos(lua_State *L)
 	push_v3f(L, cao->getPosition() / BS);
 	return 1;
 }
-
-int ClientObjectRef::l_set_pos(lua_State *L)
-{
-    ClientObjectRef *ref = checkobject(L, 1);
-    ClientActiveObject *cao = get_cao(ref);
-    if (!cao)
-        return 0;
-
-    v3f pos = check_v3f(L, 2);
-    cao->setPosition(pos * BS);
-
-    return 0;
-}
-
-// set_attachment(self, parent_obj_id, parent_bone_name, position, rotation, force_visible)
-int ClientObjectRef::l_set_attachment(lua_State *L)
-{
-    ClientObjectRef *ref = checkobject(L, 1);
-    ClientActiveObject *cao = get_cao(ref);
-    if (!cao)
-        return 0;
-
-    object_t parent_id = (object_t)luaL_checkinteger(L, 2);
-
-    const char *bone_cstr = luaL_checkstring(L, 3);
-    std::string bone(bone_cstr);
-
-    v3f pos = check_v3f(L, 4) * BS;
-
-    v3f rot = check_v3f(L, 5);
-
-    bool force_visible = lua_toboolean(L, 6);
-
-    cao->setAttachment(parent_id, bone, pos, rot, force_visible);
-
-    return 0;
-}
-
-
 
 int ClientObjectRef::l_get_velocity(lua_State *L)
 {
@@ -187,7 +148,7 @@ int ClientObjectRef::l_get_nametag(lua_State *L)
 	GenericCAO *gcao = get_generic_cao(ref, L);
 	if (!gcao)
 		return 0;
-	ObjectProperties props = gcao->getProperties();
+	const ObjectProperties &props = gcao->getProperties();
 	lua_pushstring(L, props.nametag.c_str());
 	return 1;
 }
@@ -200,10 +161,10 @@ int ClientObjectRef::l_get_item_textures(lua_State *L)
 	GenericCAO *gcao = get_generic_cao(ref, L);
 	if (!gcao)
 		return 0;
-	ObjectProperties props = gcao->getProperties();
+	const ObjectProperties &props = gcao->getProperties();
 	lua_newtable(L);
 
-	for (std::string &texture : props.textures) {
+	for (const std::string &texture : props.textures) {
 		lua_pushstring(L, texture.c_str());
 	}
 	return 1;
@@ -217,7 +178,7 @@ int ClientObjectRef::l_get_max_hp(lua_State *L)
 	GenericCAO *gcao = get_generic_cao(ref, L);
 	if (!gcao)
 		return 0;
-	ObjectProperties props = gcao->getProperties();
+	const ObjectProperties &props = gcao->getProperties();
 	lua_pushnumber(L, props.hp_max);
 	return 1;
 }
@@ -226,24 +187,23 @@ int ClientObjectRef::l_get_properties(lua_State *L)
 {
 	ClientObjectRef *ref = checkobject(L, 1);
 	GenericCAO *gcao = get_generic_cao(ref, L);
-	const ObjectProperties* prop = &gcao->getProperties();
-	push_object_properties(L, prop);
-	return 1;	
+	if (!gcao)
+		return 0;
+	const ObjectProperties &prop = gcao->getProperties();
+	push_object_properties(L, &prop);
+	return 1;
 }
-
 
 int ClientObjectRef::l_set_properties(lua_State *L)
 {
-    ClientObjectRef *ref = checkobject(L, 1);
-    GenericCAO *gcao = get_generic_cao(ref, L);
-
-    ObjectProperties prop = gcao->getProperties();
-
-    read_object_properties(L, 2, nullptr, &prop, getClient(L)->idef());
-
-    gcao->setProperties(prop);
-
-    return 1;
+	ClientObjectRef *ref = checkobject(L, 1);
+	GenericCAO *gcao = get_generic_cao(ref, L);
+	if (!gcao)
+		return 0;
+	ObjectProperties prop = gcao->getProperties();
+	read_object_properties(L, 2, nullptr, &prop, getClient(L)->idef());
+	gcao->setProperties(prop);
+	return 1;
 }
 
 int ClientObjectRef::l_get_hp(lua_State *L)
@@ -252,17 +212,8 @@ int ClientObjectRef::l_get_hp(lua_State *L)
 	GenericCAO *gcao = get_generic_cao(ref, L);
 	if (!gcao)
 		return 0;
-	lua_pushnumber(L, gcao->getHp());
-	return 1;
-}
-
-int ClientObjectRef::l_get_id(lua_State *L)
-{
-	ClientObjectRef *ref = checkobject(L, 1);
-	GenericCAO *gcao = get_generic_cao(ref, L);
-	if (!gcao)
-		return 0;
-	lua_pushnumber(L, gcao->getId());
+	// FIXME: needs DF's GenericCAO HP tracking
+	lua_pushnumber(L, 0);
 	return 1;
 }
 
@@ -299,38 +250,12 @@ int ClientObjectRef::l_remove(lua_State *L)
 	return 0;
 }
 
-int ClientObjectRef::l_set_nametag_images(lua_State *L)
-{
-    ClientObjectRef *ref = checkobject(L, 1);
-    GenericCAO *gcao = get_generic_cao(ref, L);
-
-    gcao->nametag_images.clear();
-
-    if(lua_istable(L, 2)){
-        lua_pushnil(L);
-        while(lua_next(L, 2) != 0){
-            const char* image = lua_tostring(L, -1);
-            if (image) {
-                gcao->nametag_images.push_back(image);
-            }
-            lua_pop(L, 1);
-        }
-    }
-
-    gcao->updateNametag();
-    return 0;
-}
-
 ClientObjectRef::ClientObjectRef(ClientActiveObject *object) : m_object(object)
 {
 }
 
 void ClientObjectRef::create(lua_State *L, ClientActiveObject *object)
 {
-	if (!object) {
-        lua_pushnil(L);
-        return;
-    }
 	ClientObjectRef *o = new ClientObjectRef(object);
 	*(void **)(lua_newuserdata(L, sizeof(void *))) = o;
 	luaL_getmetatable(L, className);
@@ -346,6 +271,40 @@ void ClientObjectRef::set_null(lua_State *L)
 {
 	ClientObjectRef *obj = checkobject(L, -1);
 	obj->m_object = nullptr;
+}
+
+// Extended API
+
+int ClientObjectRef::l_set_pos(lua_State *L)
+{
+	GenericCAO *gcao = get_generic_cao(checkobject(L, 1), L);
+	if (!gcao)
+		return 0;
+	gcao->setPos(checkFloatPos(L, 2));
+	return 0;
+}
+
+int ClientObjectRef::l_set_attachment(lua_State *L)
+{
+	GenericCAO *gcao = get_generic_cao(checkobject(L, 1), L);
+	if (!gcao)
+		return 0;
+	u16 parent_id = luaL_checkinteger(L, 2);
+	std::string bone = luaL_checkstring(L, 3);
+	v3f pos = check_v3f(L, 4);
+	v3f rot = check_v3f(L, 5) * core::DEGTORAD;
+	bool force_visible = lua_toboolean(L, 6);
+	gcao->setAttachment(parent_id, bone, pos, rot, force_visible);
+	return 0;
+}
+
+int ClientObjectRef::l_get_id(lua_State *L)
+{
+	ClientActiveObject *cao = get_cao(checkobject(L, 1));
+	if (!cao)
+		return 0;
+	lua_pushinteger(L, cao->getId());
+	return 1;
 }
 
 int ClientObjectRef::gc_object(lua_State *L)
@@ -377,15 +336,12 @@ void ClientObjectRef::Register(lua_State *L)
 
 	lua_pop(L, 1); // Drop metatable
 
-	luaL_openlib(L, 0, methods, 0); // fill methodtable
+	luaL_register(L, nullptr, methods); // fill methodtable
 	lua_pop(L, 1);			// Drop methodtable
 }
 
 const char ClientObjectRef::className[] = "ClientObjectRef";
-luaL_Reg ClientObjectRef::methods[] = {
-		luamethod(ClientObjectRef, get_pos),
-		luamethod(ClientObjectRef, set_pos),
-		luamethod(ClientObjectRef, set_attachment),
+luaL_Reg ClientObjectRef::methods[] = {luamethod(ClientObjectRef, get_pos),
 		luamethod(ClientObjectRef, get_velocity),
 		luamethod(ClientObjectRef, get_acceleration),
 		luamethod(ClientObjectRef, get_rotation),
@@ -398,10 +354,10 @@ luaL_Reg ClientObjectRef::methods[] = {
 		luamethod(ClientObjectRef, get_properties),
 		luamethod(ClientObjectRef, set_properties),
 		luamethod(ClientObjectRef, get_hp),
-		luamethod(ClientObjectRef, get_id),
-		luamethod(ClientObjectRef, get_max_hp), 
-		luamethod(ClientObjectRef, punch),
+		luamethod(ClientObjectRef, get_max_hp), luamethod(ClientObjectRef, punch),
 		luamethod(ClientObjectRef, rightclick),
 		luamethod(ClientObjectRef, remove),
-		luamethod(ClientObjectRef, set_nametag_images),{0, 0}
-	};
+		luamethod(ClientObjectRef, set_pos),
+		luamethod(ClientObjectRef, set_attachment),
+		luamethod(ClientObjectRef, get_id),
+		{0, 0}};

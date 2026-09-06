@@ -1,0 +1,2 @@
+fishbot (FishBot active) bool false
+fishbot.bobber_range (Bobber detection range) int 10 1 50

@@ -1,34 +1,79 @@
-// Luanti
-// SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
-// Copyright (C) 2017 nerzhul, Loic Blot <loic.blot@unix-experience.fr>
+/*
+Minetest
+Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
+Copyright (C) 2017 nerzhul, Loic Blot <loic.blot@unix-experience.fr>
 
-#include <iostream>
-#include <sstream>
-#include <string>
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation; either version 2.1 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
 #include "l_client.h"
 #include "chatmessage.h"
+#include "constants.h"
+#include "database/database.h"
+#include "daynightratio.h"
+#include "network/connection.h"
+#include "script/scripting_client.h"
+#include "client/renderingengine.h"
+#include "gui/cheatMenu.h"
+#include "gui/layerManager.h"
+#include <IFileSystem.h>
+#include <IReadFile.h>
+#include "client/session.h"
+#include "client/pathfind.h"
+#include "client/task_markers.h"
+#include "itemdef.h"
+#include "client/mod_vfs.h"
 #include "client/client.h"
 #include "client/clientevent.h"
 #include "client/sound.h"
 #include "client/clientenvironment.h"
 #include "client/game.h"
+#include "client/game_internal.h"
+#include "client/game_formspec.h"
+#include "client/localplayer.h"
 #include "common/c_content.h"
 #include "common/c_converter.h"
 #include "cpp_api/s_base.h"
 #include "gettext.h"
 #include "l_internal.h"
+#include "l_clientobject.h"
 #include "lua_api/l_nodemeta.h"
 #include "gui/mainmenumanager.h"
+#include "gui/toastManager.h"
 #include "map.h"
+#include "filesys.h"
 #include "util/string.h"
+#include "content/mods.h"
 #include "nodedef.h"
-#include "l_clientobject.h"
 #include "client/keycode.h"
-#include "client/game.h"
-#include "client/render/plain.h"
-#include "client/pathfind.h"
-#include <cstdint>
+#include "client/clientmap.h"
+#include "client/content_cao.h"
+#include "client/gameui.h"
+#include "clientdynamicinfo.h"
+#include "server.h"
+#include "porting.h"
+#include "settings.h"
+#include "collision.h"
+#include "face_position_cache.h"
+#include "util/basic_macros.h"
+#include "mapgen/mg_schematic.h"
+#include "serialization.h"
+#include "util/serialize.h"
+#include "version.h"
+#include <stack>
+#include <unordered_map>
 
 #define checkCSMRestrictionFlag(flag) \
 	( getClient(L)->checkCSMRestrictionFlag(CSMRestrictionFlags::flag) )
@@ -57,11 +102,7 @@ const static CSMFlagDesc flagdesc_csm_restriction[] = {
 // get_current_modname()
 int ModApiClient::l_get_current_modname(lua_State *L)
 {
-	std::string s = ScriptApiBase::getCurrentModNameInsecure(L);
-	if (!s.empty())
-		lua_pushstring(L, s.c_str());
-	else
-		lua_pushnil(L);
+	lua_rawgeti(L, LUA_REGISTRYINDEX, CUSTOM_RIDX_CURRENT_MOD_NAME);
 	return 1;
 }
 
@@ -72,6 +113,73 @@ int ModApiClient::l_get_modpath(lua_State *L)
 	// Client mods use a virtual filesystem, see Client::scanModSubfolder()
 	std::string path = modname + ":";
 	lua_pushstring(L, path.c_str());
+	return 1;
+}
+
+// get_modpath_real(modname)
+int ModApiClient::l_get_modpath_real(lua_State *L)
+{
+	std::string modname = readParam<std::string>(L, 1);
+	Client *client = getClient(L);
+	const ModSpec *mod = client->getModSpec(modname);
+	if (mod) {
+		lua_pushstring(L, mod->path.c_str());
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
+// reload_mod(modname)
+int ModApiClient::l_reload_mod(lua_State *L)
+{
+	std::string modname = readParam<std::string>(L, 1);
+	Client *client = getClient(L);
+	ClientScripting *script = client->getScript();
+	if (modname.empty())
+		return 0;
+
+	const ModSpec *mod = client->getModSpec(modname);
+	if (!mod) {
+		warningstream << "reload_mod: mod \"" << modname << "\" not found" << std::endl;
+		return 0;
+	}
+
+	// Re-scan mod files from disk into VFS
+	client->getModVFS()->scanModIntoMemory(modname, mod->path);
+	// Drop stale quick menu registrations owned by this mod before re-executing it
+	script->purge_quick_menu(modname);
+	// Re-execute init.lua in the existing Lua state
+	script->loadModFromMemory(modname);
+
+	// Re-initialize cheats/features if the mod defines them
+	script->init_cheats();
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+// get_last_run_mod()
+int ModApiClient::l_get_last_run_mod(lua_State *L)
+{
+	lua_rawgeti(L, LUA_REGISTRYINDEX, CUSTOM_RIDX_CURRENT_MOD_NAME);
+	std::string current_mod = readParam<std::string>(L, -1, "");
+	if (current_mod.empty()) {
+		lua_pop(L, 1);
+		lua_pushstring(L, getScriptApiBase(L)->getOrigin().c_str());
+	}
+	return 1;
+}
+
+// set_last_run_mod(modname)
+int ModApiClient::l_set_last_run_mod(lua_State *L)
+{
+	if (!lua_isstring(L, 1))
+		return 0;
+
+	const char *mod = lua_tostring(L, 1);
+	getScriptApiBase(L)->setOriginDirect(mod);
+	lua_pushboolean(L, true);
 	return 1;
 }
 
@@ -102,11 +210,6 @@ int ModApiClient::l_send_chat_message(lua_State *L)
 	if (!lua_isstring(L, 1))
 		return 0;
 
-	// If server disabled this API, discard
-
-	if (checkCSMRestrictionFlag(CSM_RF_CHAT_MESSAGES))
-		return 0;
-
 	std::string message = luaL_checkstring(L, 1);
 	getClient(L)->sendChatMessage(utf8_to_wide(message));
 	return 0;
@@ -122,19 +225,44 @@ int ModApiClient::l_clear_out_chat_queue(lua_State *L)
 // get_player_names()
 int ModApiClient::l_get_player_names(lua_State *L)
 {
-	if (checkCSMRestrictionFlag(CSM_RF_READ_PLAYERINFO))
-		return 0;
+	const std::set<std::string> &plist = getClient(L)->getConnectedPlayerNames();
 
-	auto plist = getClient(L)->getConnectedPlayerNames();
-	lua_createtable(L, plist.size(), 0);
-	int newTable = lua_gettop(L);
-	int index = 1;
-	for (const std::string &name : plist) {
+	lua_newtable(L);
+	int i = 1;
+	for (const auto &name : plist) {
 		lua_pushstring(L, name.c_str());
-		lua_rawseti(L, newTable, index);
-		index++;
+		lua_rawseti(L, -2, i);
+		i++;
 	}
 	return 1;
+}
+
+// show_formspec(formspec)
+int ModApiClient::l_show_formspec(lua_State *L)
+{
+	if (!lua_isstring(L, 1) || !lua_isstring(L, 2))
+		return 0;
+
+	ClientEvent *event = new ClientEvent();
+	event->type = CE_SHOW_CSM_FORMSPEC;
+	event->show_formspec.formname = new std::string(luaL_checkstring(L, 1));
+	event->show_formspec.formspec = new std::string(luaL_checkstring(L, 2));
+	getClient(L)->pushToEventQueue(event);
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+// send_respawn()
+int ModApiClient::l_send_respawn(lua_State *L)
+{
+	getClient(L)->sendRespawnLegacy();
+	// Modern servers (protocol 46+): close the death formspec to trigger
+	// player:respawn() via death_screen.lua on_playerReceiveFields.
+	// Harmless if the server is old (packet ignored, no formspec state).
+	StringMap fields;
+	fields["quit"] = "true";
+	getClient(L)->sendInventoryFields("__builtin:death", fields);
+	return 0;
 }
 
 // disconnect()
@@ -154,7 +282,7 @@ int ModApiClient::l_disconnect(lua_State *L)
 // gettext(text)
 int ModApiClient::l_gettext(lua_State *L)
 {
-	std::string text = strgettext(luaL_checkstring(L, 1));
+	std::string text = strgettext(std::string(luaL_checkstring(L, 1)));
 	lua_pushstring(L, text.c_str());
 
 	return 1;
@@ -179,79 +307,95 @@ int ModApiClient::l_get_node_or_nil(lua_State *L)
 	return 1;
 }
 
-int iterator_func(lua_State *L) {
-    std::vector<std::pair<v3s16, MapNode>> *nodes = reinterpret_cast<std::vector<std::pair<v3s16, MapNode>> *>(lua_touserdata(L, lua_upvalueindex(2)));
+// find_nodes_near(pos, radius, nodenames, search_center) -> {pos,...}
+int ModApiClient::l_find_nodes_near(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
 
-    // Get the current index from the upvalue
-    int i = luaL_checkinteger(L, lua_upvalueindex(1));
-    if (i >= static_cast<int>(nodes->size())){
-        // If we've passed the end, return nil to signal end of iteration
-        return 0;
-    } else {
-        // Otherwise, increment the upvalue for the next call...
-        lua_pushinteger(L, i + 1);
-        lua_replace(L, lua_upvalueindex(1));
+	v3s16 pos = read_v3s16(L, 1);
+	int radius = luaL_checkinteger(L, 2);
+	int start_radius = (lua_isboolean(L, 4) && readParam<bool>(L, 4)) ? 0 : 1;
 
-        // ...and return the node at the current index
-        push_v3s16(L, (*nodes)[i].first);
-        pushnode(L, (*nodes)[i].second);
-        return 2;  // number of returned values
-    }
+	Client *client = getClient(L);
+	radius = client->CSMClampRadius(pos, radius);
+
+	const NodeDefManager *ndef = client->getNodeDefManager();
+	std::vector<content_t> filter;
+	if (lua_istable(L, 3)) {
+		LuaHelper::for_ipairs(L, 3, [&]() {
+			luaL_checktype(L, -1, LUA_TSTRING);
+			ndef->getIds(readParam<std::string>(L, -1), filter);
+		});
+	} else if (lua_isstring(L, 3)) {
+		ndef->getIds(readParam<std::string>(L, 3), filter);
+	}
+
+	lua_newtable(L);
+	int table_idx = lua_gettop(L);
+	u32 index = 1;
+
+	for (int d = start_radius; d <= radius; d++) {
+		const std::vector<v3s16> &list = FacePositionCache::getFacePositions(d);
+		for (const v3s16 &p : list) {
+			v3s16 check_pos = pos + p;
+			bool pos_ok;
+			content_t c = client->CSMGetNode(check_pos, &pos_ok).getContent();
+			if (pos_ok && CONTAINS(filter, c)) {
+				push_v3s16(L, check_pos);
+				lua_rawseti(L, table_idx, index++);
+			}
+		}
+	}
+
+	return 1;
 }
 
-/*
-returns an iterator:
-for pos, node in minetest.all_loaded_nodes() do
-	-- process node at pos
-end
-*/
-// all_loaded_nodes()
-int ModApiClient::l_all_loaded_nodes(lua_State *L){
-    if (checkCSMRestrictionFlag(CSM_RF_LOOKUP_NODES)) {
-        return 0;
-    }
+// find_nodes_near_under_air_except(pos, radius, except_nodenames, search_center) -> {pos,...}
+int ModApiClient::l_find_nodes_near_under_air_except(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
 
-    Client *client = getClient(L);
-    std::vector<std::pair<v3s16, MapNode>> *nodes = new std::vector<std::pair<v3s16, MapNode>>(client->getAllLoadedNodes());
+	v3s16 pos = read_v3s16(L, 1);
+	int radius = luaL_checkinteger(L, 2);
+	int start_radius = (lua_isboolean(L, 4) && readParam<bool>(L, 4)) ? 0 : 1;
 
-    // We'll store the current index in the first upvalue of the iterator
-    lua_pushinteger(L, 0);
+	Client *client = getClient(L);
+	radius = client->CSMClampRadius(pos, radius);
 
-    lua_pushlightuserdata(L, nodes);
+	const NodeDefManager *ndef = client->getNodeDefManager();
+	std::vector<content_t> except_filter;
+	if (lua_istable(L, 3)) {
+		LuaHelper::for_ipairs(L, 3, [&]() {
+			luaL_checktype(L, -1, LUA_TSTRING);
+			ndef->getIds(readParam<std::string>(L, -1), except_filter);
+		});
+	} else if (lua_isstring(L, 3)) {
+		ndef->getIds(readParam<std::string>(L, 3), except_filter);
+	}
 
-    // This is the iterator function
-    lua_pushcclosure(L, iterator_func, 2);  // 2 upvalues (the index and nodes)
+	lua_newtable(L);
+	int table_idx = lua_gettop(L);
+	u32 index = 1;
 
-    return 1;  // return the iterator function
+	for (int d = start_radius; d <= radius; d++) {
+		const std::vector<v3s16> &list = FacePositionCache::getFacePositions(d);
+		for (const v3s16 &p : list) {
+			v3s16 check_pos = pos + p;
+			v3s16 above_pos = check_pos + v3s16(0, 1, 0);
+			bool pos_ok, above_ok;
+			content_t c = client->CSMGetNode(check_pos, &pos_ok).getContent();
+			content_t c_above = client->CSMGetNode(above_pos, &above_ok).getContent();
+			if (pos_ok && above_ok &&
+					c != CONTENT_AIR && c_above == CONTENT_AIR &&
+					!CONTAINS(except_filter, c)) {
+				push_v3s16(L, check_pos);
+				lua_rawseti(L, table_idx, index++);
+			}
+		}
+	}
+
+	return 1;
 }
-
-/*
-returns an iterator:
-for pos, node in minetest.nodes_at_block_pos(block_pos) do
-	-- process node at pos
-end
-*/
-// nodes_at_block_pos(pos)
-int ModApiClient::l_nodes_at_block_pos(lua_State *L){
-    if (checkCSMRestrictionFlag(CSM_RF_LOOKUP_NODES)) {
-        return 0;
-    }
-
-    v3s16 pos = read_v3s16(L, 1);
-    Client *client = getClient(L);
-    std::vector<std::pair<v3s16, MapNode>> *nodes = new std::vector<std::pair<v3s16, MapNode>>(client->getNodesAtBlockPos(pos));
-
-    // We'll store the current index in the first upvalue of the iterator
-    lua_pushinteger(L, 0);
-
-    lua_pushlightuserdata(L, nodes);
-
-    // This is the iterator function
-    lua_pushcclosure(L, iterator_func, 2);  // 2 upvalues (the index and nodes)
-
-    return 1;  // return the iterator function
-}
-
 
 // get_langauge()
 int ModApiClient::l_get_language(lua_State *L)
@@ -263,7 +407,7 @@ int ModApiClient::l_get_language(lua_State *L)
 #endif
 	std::string lang = gettext("LANG_CODE");
 	if (lang == "LANG_CODE")
-		lang.clear();
+		lang = "";
 
 	lua_pushstring(L, locale);
 	lua_pushstring(L, lang.c_str());
@@ -286,14 +430,31 @@ int ModApiClient::l_get_meta(lua_State *L)
 	return 1;
 }
 
+// sound_play(spec, parameters) — FIXME: luanti's ISoundManager API differs
+int ModApiClient::l_sound_play(lua_State *L)
+{
+	lua_pushinteger(L, -1);
+	return 1;
+}
+
+// sound_stop(handle)
+int ModApiClient::l_sound_stop(lua_State *L)
+{
+	return 0;
+}
+
+// sound_fade(handle, step, gain)
+int ModApiClient::l_sound_fade(lua_State *L)
+{
+	return 0;
+}
+
 // get_server_info()
 int ModApiClient::l_get_server_info(lua_State *L)
 {
 	Client *client = getClient(L);
 	Address serverAddress = client->getServerAddress();
 	lua_newtable(L);
-	lua_pushstring(L, client->getPlayerName().c_str());
-	lua_setfield(L, -2, "playername");
 	lua_pushstring(L, client->getAddressName().c_str());
 	lua_setfield(L, -2, "address");
 	lua_pushstring(L, serverAddress.serializeString().c_str());
@@ -302,8 +463,118 @@ int ModApiClient::l_get_server_info(lua_State *L)
 	lua_setfield(L, -2, "port");
 	lua_pushinteger(L, client->getProtoVersion());
 	lua_setfield(L, -2, "protocol_version");
-	lua_pushinteger(L, client->getMapSeed());
-	lua_setfield(L, -2, "seed");
+	return 1;
+}
+
+// get_player_information([name]) — self-scoped mirror of server-side
+// core.get_player_information. The client only has data about its own
+// connection, so if `name` is given and does not match the local player,
+// nil is returned.
+int ModApiClient::l_get_player_information(lua_State *L)
+{
+	Client *client = getClient(L);
+
+	if (!lua_isnoneornil(L, 1)) {
+		std::string name = luaL_checkstring(L, 1);
+		if (name != client->getEnv().getLocalPlayer()->getName()) {
+			lua_pushnil(L);
+			return 1;
+		}
+	}
+
+	con::IConnection &conn = client->getConnection();
+
+	auto getConInfo = [&] (con::rtt_stat_type type) -> float {
+		return conn.getPeerStat(PEER_ID_SERVER, type);
+	};
+
+	lua_newtable(L);
+	int table = lua_gettop(L);
+
+	lua_pushstring(L, "min_rtt");
+	lua_pushnumber(L, getConInfo(con::MIN_RTT));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "max_rtt");
+	lua_pushnumber(L, getConInfo(con::MAX_RTT));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "avg_rtt");
+	lua_pushnumber(L, getConInfo(con::AVG_RTT));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "min_jitter");
+	lua_pushnumber(L, getConInfo(con::MIN_JITTER));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "max_jitter");
+	lua_pushnumber(L, getConInfo(con::MAX_JITTER));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "avg_jitter");
+	lua_pushnumber(L, getConInfo(con::AVG_JITTER));
+	lua_settable(L, table);
+
+	lua_pushstring(L, "protocol_version");
+	lua_pushnumber(L, client->getProtoVersion());
+	lua_settable(L, table);
+
+	lua_pushstring(L, "formspec_version");
+	lua_pushnumber(L, FORMSPEC_API_VERSION);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "lang_code");
+	std::string lang = gettext("LANG_CODE");
+	if (lang == "LANG_CODE")
+		lang = "";
+	lua_pushstring(L, lang.c_str());
+	lua_settable(L, table);
+
+	lua_pushstring(L, "version_string");
+	lua_pushstring(L, g_version_string);
+	lua_settable(L, table);
+
+	return 1;
+}
+
+// get_player_window_information([name]) — self-scoped mirror of server-side
+// core.get_player_window_information. The client only knows its own window,
+// so if `name` is given and does not match the local player, returns nothing.
+int ModApiClient::l_get_player_window_information(lua_State *L)
+{
+	Client *client = getClient(L);
+
+	if (!lua_isnoneornil(L, 1)) {
+		std::string name = luaL_checkstring(L, 1);
+		if (name != client->getEnv().getLocalPlayer()->getName())
+			return 0;
+	}
+
+	ClientDynamicInfo dyn = ClientDynamicInfo::getCurrent();
+
+	lua_newtable(L);
+	int table = lua_gettop(L);
+
+	lua_pushstring(L, "size");
+	push_v2u32(L, dyn.render_target_size);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "max_formspec_size");
+	push_v2f(L, dyn.max_fs_size);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "real_gui_scaling");
+	lua_pushnumber(L, dyn.real_gui_scaling);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "real_hud_scaling");
+	lua_pushnumber(L, dyn.real_hud_scaling);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "touch_controls");
+	lua_pushboolean(L, dyn.touch_controls);
+	lua_settable(L, table);
+
 	return 1;
 }
 
@@ -315,9 +586,6 @@ int ModApiClient::l_get_item_def(lua_State *L)
 
 	IItemDefManager *idef = gdef->idef();
 	assert(idef);
-
-	if (checkCSMRestrictionFlag(CSM_RF_READ_ITEMDEFS))
-		return 0;
 
 	if (!lua_isstring(L, 1))
 		return 0;
@@ -332,6 +600,31 @@ int ModApiClient::l_get_item_def(lua_State *L)
 	return 1;
 }
 
+// get_item_names()
+// Returns a sorted array of all defined item names (excluding aliases).
+int ModApiClient::l_get_item_names(lua_State *L)
+{
+	IGameDef *gdef = getGameDef(L);
+	assert(gdef);
+
+	IItemDefManager *idef = gdef->idef();
+	assert(idef);
+
+	std::set<std::string> names;
+	idef->getAll(names);
+
+	lua_newtable(L);
+	int index = 1;
+	for (const std::string &name : names) {
+		// Skip aliases: a real definition resolves to itself.
+		if (idef->getAlias(name) != name)
+			continue;
+		lua_pushstring(L, name.c_str());
+		lua_rawseti(L, -2, index++);
+	}
+	return 1;
+}
+
 // get_node_def(nodename)
 int ModApiClient::l_get_node_def(lua_State *L)
 {
@@ -342,9 +635,6 @@ int ModApiClient::l_get_node_def(lua_State *L)
 	assert(ndef);
 
 	if (!lua_isstring(L, 1))
-		return 0;
-
-	if (checkCSMRestrictionFlag(CSM_RF_READ_NODEDEFS))
 		return 0;
 
 	std::string name = readParam<std::string>(L, 1);
@@ -372,7 +662,11 @@ int ModApiClient::l_get_privilege_list(lua_State *L)
 // get_builtin_path()
 int ModApiClient::l_get_builtin_path(lua_State *L)
 {
-	lua_pushstring(L, BUILTIN_MOD_NAME ":");
+	// SSCSM uses "*client_builtin*", regular client uses "*builtin*"
+	if (getScriptApiBase(L)->getType() == ScriptingType::SSCSM)
+		lua_pushstring(L, "*client_builtin*:");
+	else
+		lua_pushstring(L, BUILTIN_MOD_NAME ":");
 	return 1;
 }
 
@@ -388,31 +682,29 @@ int ModApiClient::l_get_csm_restrictions(lua_State *L)
 	}
 	return 1;
 }
+
+// send_damage(damage)
+int ModApiClient::l_send_damage(lua_State *L)
+{
+	u16 damage = luaL_checknumber(L, 1);
+	getClient(L)->sendDamage(damage);
+	return 0;
+}
+
 // place_node(pos)
 int ModApiClient::l_place_node(lua_State *L)
 {
 	Client *client = getClient(L);
+	ClientMap &map = client->getEnv().getClientMap();
 	LocalPlayer *player = client->getEnv().getLocalPlayer();
-	const NodeDefManager *nodedef = client->ndef();
 	ItemStack selected_item, hand_item;
 	player->getWieldedItem(&selected_item, &hand_item);
 	const ItemDefinition &selected_def = selected_item.getDefinition(getGameDef(L)->idef());
 	v3s16 pos = read_v3s16(L, 1);
-	PointedThing pointed;
-	pointed.type = POINTEDTHING_NODE;
-	pointed.node_abovesurface = pos;
-	pointed.node_undersurface = pos;
-	// Add node to client map
-	content_t id;
-	bool found = nodedef->getId(selected_def.node_placement_prediction, id);
-	if (!found) {
-		client->interact(INTERACT_PLACE, pointed);
-		return 0;
-	}
-
-	MapNode n(id, 0, 0);
-	client->addNode(pos, n);
-	client->interact(INTERACT_PLACE, pointed);
+	NodeMetadata *meta = map.getNodeMetadata(pos);
+	v3f intersection_point = intToFloat(pos, BS);
+	PointedThing pointed(pos, pos, pos, intersection_point, v3f(0, 0, 0), 0, 0, PointabilityType::POINTABLE_NOT);
+	g_game->nodePlacement(selected_def, selected_item, pos, pos, pointed, meta);
 	return 0;
 }
 
@@ -421,222 +713,11 @@ int ModApiClient::l_dig_node(lua_State *L)
 {
 	Client *client = getClient(L);
 	v3s16 pos = read_v3s16(L, 1);
-	PointedThing pointed;
-	pointed.type = POINTEDTHING_NODE;
-	pointed.node_abovesurface = pos;
-	pointed.node_undersurface = pos;
+	v3f intersection_point = intToFloat(pos, BS);
+	PointedThing pointed(pos, pos, pos, intersection_point, v3f(0, 0, 0), 0, 0, PointabilityType::POINTABLE_NOT);
 	client->interact(INTERACT_START_DIGGING, pointed);
 	client->interact(INTERACT_DIGGING_COMPLETED, pointed);
 	client->removeNode(pos);
-	return 0;
-}
-
-// start_dig(pos)
-int ModApiClient::l_start_dig(lua_State *L)
-{
-	Client *client = getClient(L);
-	v3s16 pos = read_v3s16(L, 1);
-	PointedThing pointed;
-	pointed.type = POINTEDTHING_NODE;
-	pointed.node_abovesurface = pos;
-	pointed.node_undersurface = pos;
-	client->interact(INTERACT_START_DIGGING, pointed);
-	return 0;
-}
-
-// can_attack(object_id)
-int ModApiClient::l_can_attack(lua_State *L)
-{
-	u16 object_id = lua_tointeger(L, 1);
-
-	ClientEnvironment &env = getClient(L)->getEnv();
-	GenericCAO *gcao = env.getGenericCAO(object_id);
-
-	if (!gcao) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	bool can_attack = gcao->canAttack(1);
-
-	lua_pushboolean(L, can_attack);
-
-	return 1;
-}
-
-// get_server_url
-int ModApiClient::l_get_server_url(lua_State *L)
-{
-	Client *client = getClient(L);
-	if (!client->m_simple_singleplayer_mode) {
-		Address serverAddress = client->getServerAddress();
-		std::string address = client->getAddressName().c_str();
-		u16 port = serverAddress.getPort();
-		std::string server_url = address + ":" + toPaddedString(port);
-		lua_pushstring(L, server_url.c_str());
-		return 1;
-	}
-	lua_pushnil(L);
-	return 0;
-}
-
-// get_inv_item_damage(index, object_id)
-int ModApiClient::l_get_inv_item_damage(lua_State *L)
-{
-	Client *client = getClient(L);
-
-	u32 index = luaL_checkinteger(L, 1) - 1;
-	u16 object_id = lua_tointeger(L, 2);
-
-	InventoryLocation inventory_location;
-	std::string location = "current_player";
-
-	inventory_location.deSerialize(location);
-	Inventory *inventory = client->getInventory(inventory_location);
-	if (!inventory) {
-		lua_pushnil(L);
-		return 0;
-	}
-	InventoryList *list = inventory->getList("main");
-	if (!list) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	if (index < 0 || index > list->getSize() - 1) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	ItemStack punchitem;
-	try {
-		punchitem = list->getItem(index);
-	} catch (...) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	const ToolCapabilities toolcap = punchitem.getToolCapabilities(client->idef());
-
-	ClientEnvironment &env = client->getEnv();
-	GenericCAO *gcao = env.getGenericCAO(object_id);
-	if (!gcao) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	PunchDamageResult result = getPunchDamageFleshy(
-			gcao->getGroups(),
-			&toolcap,
-			&punchitem,
-			g_game->getRunData().time_from_last_punch,
-			punchitem.wear);
-
-	push_punch_damage_result(L, &result);
-
-	return 1;
-}
-
-int ModApiClient::l_get_inv_item_break(lua_State *L)
-{
-	// get node and itemdefs
-	IGameDef *gdef = getGameDef(L);
-	if (!gdef)
-	{
-	    lua_pushnil(L);
-	    return 0;
-	}
-
-	const NodeDefManager *ndef = gdef->ndef();
-	if (!ndef)
-	{
-	    lua_pushnil(L);
-	    return 0;
-	}
-
-	IItemDefManager *idef = gdef->idef();
-	if (!idef)
-	{
-	    lua_pushnil(L);
-	    return 0;
-	}
-
-	// get inputs
-	u32 index = luaL_checkinteger(L, 1) - 1;
-	v3s16 nodepos = read_v3s16(L, 2);
-
-	// get inventory item
-	Client *client = getClient(L);
-
-	InventoryLocation inventory_location;
-	std::string location = "current_player";
-
-	inventory_location.deSerialize(location);
-	Inventory *inventory = client->getInventory(inventory_location);
-	if (!inventory) {
-		lua_pushnil(L);
-		return 0;
-	}
-	InventoryList *list = inventory->getList("main");
-	if (!list) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	if (index < 0 || index > list->getSize() - 1) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	ItemStack selecteditem;
-	try {
-		selecteditem = list->getItem(index);
-	} catch (...) {
-		lua_pushnil(L);
-		return 0;
-	}
-
-	const ToolCapabilities toolcap = selecteditem.getToolCapabilities(idef);
-
-	// get node data
-	ClientEnvironment &env = client->getEnv();
-	ClientMap &map = env.getClientMap();
-	MapNode n = map.getNode(nodepos);
-	const ContentFeatures &features = ndef->get(n);
-
-	// get dig result
-	DigParams result = getDigParams(
-			features.groups,
-			&toolcap,
-			selecteditem.wear);
-
-	if (!result.diggable) {
-		LocalPlayer *player = env.getLocalPlayer();
-		ItemStack hand_item;
-		player->getHandItem(&hand_item);
-		result = getDigParams(
-			features.groups,
-			&hand_item.getToolCapabilities(idef));
-	}
-
-	push_dig_result(L, &result);
-
-	return 1;
-}
-
-
-int ModApiClient::l_send_damage(lua_State *L)
-{
-	u16 damage = luaL_checknumber(L, 1);
-	getClient(L)->sendDamage(damage);
-	return 0;
-}
-
-// set_fast_speed(speed)
-int ModApiClient::l_set_fast_speed(lua_State *L)
-{
-	f32 newSpeed = luaL_checknumber(L, 1);
-	g_settings->setFloat("movement_speed_fast", newSpeed);
 	return 0;
 }
 
@@ -669,7 +750,8 @@ int ModApiClient::l_set_keypress(lua_State *L)
 	std::string setting_name = "keymap_" + readParam<std::string>(L, 1);
 	bool pressed = lua_isboolean(L, 2) && readParam<bool>(L, 2);
 	try {
-		KeyPress keyCode = getKeySetting(setting_name.c_str());
+		const auto keylist = getKeySetting(setting_name.c_str());
+		KeyPress keyCode = keylist.empty() ? KeyPress() : keylist[0];
 		if (pressed)
 			g_game->getInput()->setKeypress(keyCode);
 		else
@@ -691,31 +773,13 @@ int ModApiClient::l_drop_selected_item(lua_State *L)
 // get_objects_inside_radius(pos, radius)
 int ModApiClient::l_get_objects_inside_radius(lua_State *L)
 {
-    ClientEnvironment &env = getClient(L)->getEnv();
-
-    v3f pos = checkFloatPos(L, 1);
-    float radius = readParam<float>(L, 2) * BS;
-
-    std::vector<DistanceSortedActiveObject> objs;
-    env.getActiveObjects(pos, radius, objs);
-
-    lua_createtable(L, objs.size(), 0);
-    for (size_t i = 0; i < objs.size(); ++i) {
-        ClientObjectRef::create(L, objs[i].obj);
-        lua_rawseti(L, -2, i + 1);
-    }
-    return 1;
-}
-
-// get_all_objects(pos)
-int ModApiClient::l_get_all_objects(lua_State *L)
-{
 	ClientEnvironment &env = getClient(L)->getEnv();
 
 	v3f pos = checkFloatPos(L, 1);
+	float radius = readParam<float>(L, 2) * BS;
 
 	std::vector<DistanceSortedActiveObject> objs;
-	env.getAllActiveObjects(pos, objs);
+	env.getActiveObjects(pos, radius, objs);
 
 	int i = 0;
 	lua_createtable(L, objs.size(), 0);
@@ -726,70 +790,20 @@ int ModApiClient::l_get_all_objects(lua_State *L)
 	return 1;
 }
 
-// get_active_object(id)
-int ModApiClient::l_get_active_object(lua_State *L)
-{
-	u16 id = luaL_checknumber(L, 1);
-
-	ClientObjectRef::create(L, id);
-
-	return 1;
-}
-
-std::string makeGenericEntityInitData() {
-    // Raw string literal containing the init string for a generic entity mesh with the character.b3d mesh and character.png texture, this allows modification using object properties
-    static const char raw_data[] = 	R"("\u0001\u0000\u0011clientside:object\u0000\u0000\u0002Bi\u00eb\u0085A\u00a0\u0000\u0000\u00c2^=q\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\n\u0005\u0000\u0000\u0000\u00b8\u0000\u0004\u0000\n\u0000\u0000\u0000\u0000\u0000\u00bf\u0000\u0000\u0000\u00bf\u0000\u0000\u0000\u00bf\u0000\u0000\u0000?\u0000\u0000\u0000?\u0000\u0000\u0000?\u0000\u0000\u0000\u00bf\u0000\u0000\u0000\u00bf\u0000\u0000\u0000\u00bf\u0000\u0000\u0000?\u0000\u0000\u0000?\u0000\u0000\u0000?\u0000\u0000\u0000\u0000\u0000\u0004mesh?\u0080\u0000\u0000?\u0080\u0000\u0000?\u0080\u0000\u0000\u0000\u0001\u0000\rcharacter.png\u0000\u0001\u0000\u0001\u0000\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0000\u0000\rcharacter.b3d\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001\u0000\u0000\u00ff\u00ff\u00ff\u00ff\u00bf\u0080\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000?\u00d0\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\n^[brighten\u0001\u0000\u0000\u0001\u0001\u0001\u0000\u0000\u007f\u0000\u0000\u0000\u0000\u0000\r\u0005\u0000\u0001\u0000\u0006fleshy\u0000d\u0000\u0000\u0000\u0012\u0006\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u001e\b\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u0002\u0000\u0000")";
-
-    std::string init_data(raw_data);
-
-    std::istringstream ss(init_data);
-    return deSerializeJsonString(ss);
-}
-
-
-// add_active_object()
-int ModApiClient::l_add_active_object(lua_State *L)
-{
-	ClientEnvironment &env = getClient(L)->getEnv();
-	u16 id = env.getAvailableClientObjectID();
-
-	std::string init_data = makeGenericEntityInitData();
-
-	std::unique_ptr<ClientActiveObject> obj = ClientActiveObject::create((ActiveObjectType) ACTIVEOBJECT_TYPE_GENERIC, getClient(L), &env);
-	if (!obj) {
-		infostream<<"ClientEnvironment::addActiveObject(): "
-			<<"id="<<id<<" type="<<ACTIVEOBJECT_TYPE_GENERIC<<": Couldn't create object"
-			<<std::endl;
-		lua_pushnil(L);
-		return 1;
-	}
-
-	try {
-		obj->initialize(init_data);
-		obj->setId(id);
-		obj->setPosition(v3f(0, 0, 0));
-	} catch(SerializationError &e) {
-		errorstream<<"ClientEnvironment::addActiveObject():"
-			<<" id="<<id<<" type="<<(ActiveObjectType) ACTIVEOBJECT_TYPE_GENERIC
-			<<": SerializationError in initialize(): "
-			<<e.what()
-			<<": init_data="<<serializeJsonString(init_data)
-			<<std::endl;
-		
-		lua_pushnil(L);
-		return 1;
-	}
-
-	u16 new_id = env.addActiveObject(std::move(obj));
-
-	lua_pushinteger(L, new_id);
-	return 1;
-}
-
 // make_screenshot()
 int ModApiClient::l_make_screenshot(lua_State *L)
 {
-	getClient(L)->makeScreenshot();
+	auto filename = getClient(L)->makeScreenshot();
+	if (!filename.empty()) {
+		// return just the basename (no path) for formspec use
+		auto pos = filename.rfind('/');
+		if (pos == std::string::npos)
+			pos = filename.rfind('\\');
+		if (pos != std::string::npos)
+			filename = filename.substr(pos + 1);
+		lua_pushstring(L, filename.c_str());
+		return 1;
+	}
 	return 0;
 }
 
@@ -816,6 +830,7 @@ Exact pointing location (currently only `Raycast` supports these fields):
   Is a null vector `{x = 0, y = 0, z = 0}` when the pointer is inside the
   selection box.
 */
+
 // interact(action, pointed_thing)
 int ModApiClient::l_interact(lua_State *L)
 {
@@ -854,154 +869,33 @@ int ModApiClient::l_interact(lua_State *L)
 	else
 		return 0;
 
-	PointedThing pointed;
-	pointed.type = type;
-	ClientObjectRef *obj;
-
 	switch (type) {
-	case POINTEDTHING_NODE:
+	case POINTEDTHING_NODE: {
 		lua_getfield(L, 2, "under");
-		pointed.node_undersurface = check_v3s16(L, -1);
-
+		v3s16 under = check_v3s16(L, -1);
 		lua_getfield(L, 2, "above");
-		pointed.node_abovesurface = check_v3s16(L, -1);
-		break;
-	case POINTEDTHING_OBJECT:
+		v3s16 above = check_v3s16(L, -1);
+		v3f point = intToFloat(under, BS);
+		PointedThing pointed(under, above, under, point, v3f(0, 0, 0), 0, 0, PointabilityType::POINTABLE_NOT);
+		getClient(L)->interact(action, pointed);
+		lua_pushboolean(L, true);
+		return 1;
+	}
+	case POINTEDTHING_OBJECT: {
 		lua_getfield(L, 2, "ref");
-		obj = ClientObjectRef::checkobject(L, -1);
-		pointed.object_id = obj->getClientActiveObject()->getId();
-		break;
+		ClientObjectRef *obj = ClientObjectRef::checkobject(L, -1);
+		u16 id = obj->getClientActiveObject()->getId();
+		PointedThing pointed(id, v3f(0, 0, 0), v3f(0, 0, 0), v3f(0, 0, 0), 0, PointabilityType::POINTABLE_NOT);
+		getClient(L)->interact(action, pointed);
+		lua_pushboolean(L, true);
+		return 1;
+	}
 	default:
-		break;
+		getClient(L)->interact(action, PointedThing());
+		lua_pushboolean(L, true);
+		return 1;
 	}
-
-	getClient(L)->interact(action, pointed);
-	lua_pushboolean(L, true);
-	return 1;
 }
-
-
-// file_write(path, content)
-int ModApiClient::l_file_write(lua_State *L)
-{
-	NO_MAP_LOCK_REQUIRED;
-	const char *path = luaL_checkstring(L, 1);
-	auto content = readParam<std::string_view>(L, 2);
-	bool unsafe_write = false;
-	if(lua_istable(L, 3)){
-		lua_getfield(L, 3, "UNSAFE");
-		if(lua_isboolean(L, -1)){
-			unsafe_write = lua_toboolean(L, -1);
-		}
-		lua_pop(L, 1); 
-	}
-
-	if (!unsafe_write || g_settings->getBool("secure.enable_security")) {
-		CHECK_SECURE_PATH(L, path, true);
-	}
-
-	bool ret = fs::safeWriteToFile(path, content);
-	lua_pushboolean(L, ret);
-
-	return 1;
-}
-
-// file_append(path, content)
-int ModApiClient::l_file_append(lua_State *L)
-{
-	NO_MAP_LOCK_REQUIRED;
-	const char *path = luaL_checkstring(L, 1);
-	auto content = readParam<std::string_view>(L, 2);
-	bool unsafe_write = false;
-	if(lua_istable(L, 3)){
-		lua_getfield(L, 3, "UNSAFE");
-		if(lua_isboolean(L, -1)){
-			unsafe_write = lua_toboolean(L, -1);
-		}
-		lua_pop(L, 1); 
-	}
-
-	if (!unsafe_write || g_settings->getBool("secure.enable_security")) {
-		CHECK_SECURE_PATH(L, path, true);
-	}
-
-	bool ret = fs::safeAppendToFile(path, content);
-	lua_pushboolean(L, ret);
-
-	return 1;
-}
-
-// get_node_name(pos)
-int ModApiClient::l_get_node_name(lua_State *L)
-{
-	v3s16 pos = read_v3s16(L, 1);
-
-	Client *client = getClient(L);
-	const NodeDefManager *nodedef = client->getNodeDefManager();
-
-	bool pos_ok;
-	MapNode n = getClient(L)->CSMGetNode(pos, &pos_ok);
-	if (pos_ok) {
-		if (n.getContent() == CONTENT_IGNORE) {
-			lua_pushstring(L, "ignore");
-		} else if (nodedef->get(n).name == "unknown") {
-			lua_pushstring(L, "unknown");
-		} else {
-			lua_pushstring(L, nodedef->get(n).name.c_str());
-		}
-	} else {
-		lua_pushnil(L);
-	}
-    
-    return 1; 
-}
-
-
-
-// add_task_node(pos, color)
-int ModApiClient::l_add_task_node(lua_State *L)
-{	
-	v3f pos = checkFloatPos(L, 1);
-	video::SColor color = read_ARGB8(L, 2);
-	
-	DrawTaskBlocksAndTracers::addTaskNode(TaskNode{pos, color});
-
-	return 0;
-}
-
-// clear_task_node(pos)
-int ModApiClient::l_clear_task_node(lua_State *L)
-{
-	v3f pos = checkFloatPos(L, 1);
-	
-	DrawTaskBlocksAndTracers::removeTaskNode(TaskNode{pos});
-
-	return 0;
-}
-
-// add_task_tracer(start_pos, end_pos, color)
-int ModApiClient::l_add_task_tracer(lua_State *L)
-{
-	v3f start_pos = checkFloatPos(L, 1);
-	v3f end_pos = checkFloatPos(L, 2);
-	video::SColor color = read_ARGB8(L, 3);
-	
-	DrawTaskBlocksAndTracers::addTaskTracer(TaskTracer{start_pos, end_pos, color});
-
-	return 0;
-}
-
-// clear_task_tracer(start_pos, end_pos)
-int ModApiClient::l_clear_task_tracer(lua_State *L)
-{
-	v3f start_pos = checkFloatPos(L, 1);
-	v3f end_pos = checkFloatPos(L, 2);
-	
-	DrawTaskBlocksAndTracers::removeTaskTracer(TaskTracer{start_pos, end_pos});
-
-	return 0;
-}
-
 
 StringMap *table_to_stringmap(lua_State *L, int index)
 {
@@ -1045,145 +939,1634 @@ int ModApiClient::l_send_nodemeta_fields(lua_State *L)
 	return 0;
 }
 
-// update_infotexts()
-int ModApiClient::l_update_infotexts(lua_State *L)
+// read_file(path)
+int ModApiClient::l_read_file(lua_State *L)
 {
-	getClient(L)->getScript()->update_infotexts();
+	std::string path = luaL_checkstring(L, 1);
+	// Normalize path to resolve any .. components from RUN_IN_PLACE paths
+	{
+		std::string normalized = fs::AbsolutePath(path);
+		if (!normalized.empty())
+			path = normalized;
+	}
+	// Prevent directory traversal
+	if (path.find("..") != std::string::npos) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Path traversal denied");
+		return 2;
+	}
+	// Try as-is first, then relative to share path (for RUN_IN_PLACE setups
+	// where cwd may be bin/ instead of the project root)
+	std::string content;
+	if (fs::ReadFile(path, content)) {
+		lua_pushlstring(L, content.data(), content.size());
+		return 1;
+	}
+	// Try relative to share path
+	std::string alt = porting::path_share + DIR_DELIM + path;
+	if (fs::ReadFile(alt, content)) {
+		lua_pushlstring(L, content.data(), content.size());
+		return 1;
+	}
+	lua_pushnil(L);
+	lua_pushstring(L, "File not found");
+	return 2;
+}
+
+// decode_image(data)
+int ModApiClient::l_decode_image(lua_State *L)
+{
+	size_t len;
+	const char *data = luaL_checklstring(L, 1, &len);
+	if (!data || len == 0) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Empty data");
+		return 2;
+	}
+
+	auto *device = RenderingEngine::get_raw_device();
+	if (!device) {
+		lua_pushnil(L);
+		lua_pushstring(L, "No rendering device");
+		return 2;
+	}
+	auto *fs = device->getFileSystem();
+	auto *vd = device->getVideoDriver();
+
+	auto *memfile = fs->createMemoryReadFile(data, (u32)len,
+		"__antilua_decode__");
+	if (!memfile) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Failed to create memory file");
+		return 2;
+	}
+
+	video::IImage *img = vd->createImageFromFile(memfile);
+	memfile->drop();
+
+	if (!img) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Failed to decode image");
+		return 2;
+	}
+
+	u32 w = img->getDimension().Width;
+	u32 h = img->getDimension().Height;
+
+	// Convert to consistent RGBA format
+	video::IImage *rgba_img = img;
+	bool needs_drop = false;
+	if (img->getColorFormat() != video::ECF_A8R8G8B8) {
+		rgba_img = vd->createImage(video::ECF_A8R8G8B8, img->getDimension());
+		if (rgba_img) {
+			img->copyTo(rgba_img);
+			needs_drop = true;
+		} else {
+			rgba_img = img;
+		}
+	}
+
+	// Build RGBA byte string
+	std::string pixels;
+	pixels.reserve((size_t)w * h * 4);
+	for (u32 y = 0; y < h; y++) {
+		for (u32 x = 0; x < w; x++) {
+			video::SColor c = rgba_img->getPixel(x, y);
+			pixels.push_back((char)c.getRed());
+			pixels.push_back((char)c.getGreen());
+			pixels.push_back((char)c.getBlue());
+			pixels.push_back((char)c.getAlpha());
+		}
+	}
+
+	if (needs_drop)
+		rgba_img->drop();
+	img->drop();
+
+	lua_createtable(L, 0, 3);
+	lua_pushinteger(L, (int)w);
+	lua_setfield(L, -2, "width");
+	lua_pushinteger(L, (int)h);
+	lua_setfield(L, -2, "height");
+	lua_pushlstring(L, pixels.data(), pixels.size());
+	lua_setfield(L, -2, "data");
+	return 1;
+}
+
+// write_file(path, data)
+int ModApiClient::l_write_file(lua_State *L)
+{
+	std::string path = luaL_checkstring(L, 1);
+	// Normalize path to resolve any .. components
+	{
+		std::string normalized = fs::AbsolutePath(path);
+		if (!normalized.empty())
+			path = normalized;
+	}
+	// Prevent directory traversal
+	if (path.find("..") != std::string::npos) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Path traversal denied");
+		return 2;
+	}
+	size_t data_len;
+	const char *content = luaL_checklstring(L, 2, &data_len);
+
+	if (fs::safeWriteToFile(path, std::string_view(content, data_len))) {
+		lua_pushboolean(L, true);
+		return 1;
+	}
+
+	lua_pushnil(L);
+	lua_pushstring(L, "Failed to write file");
+	return 2;
+}
+
+// get_dir_list(path, is_dir)
+int ModApiClient::l_get_dir_list(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	const char *path = luaL_checkstring(L, 1);
+	if (std::string(path).find("..") != std::string::npos) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Path traversal denied");
+		return 1;
+	}
+	bool list_all = !lua_isboolean(L, 2);
+	bool list_dirs = readParam<bool>(L, 2);
+	std::vector<fs::DirListNode> list = fs::GetDirListing(path);
+	int index = 0;
+	lua_newtable(L);
+	for (const fs::DirListNode &dln : list) {
+		if (list_all || list_dirs == dln.dir) {
+			lua_pushstring(L, dln.name.c_str());
+			lua_rawseti(L, -2, ++index);
+		}
+	}
+	return 1;
+}
+
+// create_client_entity(pos, properties)
+int ModApiClient::l_create_client_entity(lua_State *L)
+{
+	Client *client = getClient(L);
+	ClientEnvironment &env = client->getEnv();
+
+	v3f pos = checkFloatPos(L, 1);
+
+	auto obj = std::make_unique<GenericCAO>(client, &env);
+	GenericCAO *raw_obj = obj.get();
+
+	raw_obj->setPos(pos);
+	raw_obj->setVisible(true);
+
+	if (lua_istable(L, 2)) {
+		ObjectProperties prop = raw_obj->getProperties();
+		read_object_properties(L, 2, nullptr, &prop, client->idef());
+		raw_obj->setInitProperties(prop);
+	}
+
+	u16 id = env.addActiveObject(std::move(obj));
+	if (id == 0)
+		return 0;
+
+	ClientActiveObject *cao = env.getActiveObject(id);
+	if (!cao)
+		return 0;
+	ClientObjectRef::create(L, cao);
+
+	lua_getglobal(L, "core");
+	lua_getfield(L, -1, "object_refs");
+	if (lua_istable(L, -1)) {
+		lua_pushvalue(L, -3);
+		lua_rawseti(L, -2, id);
+	}
+	lua_pop(L, 2);
+
+	return 1;
+}
+
+// read_schematic(schematic, options)
+int ModApiClient::l_read_schematic(lua_State *L)
+{
+	// If input is a table, parse as schematic def and return canonical form
+	if (lua_istable(L, 1)) {
+		lua_pushvalue(L, 1);
+		return 1;
+	}
+
+	// Input must be a string (raw MTS binary data)
+	size_t len;
+	const char *data = luaL_checklstring(L, 1, &len);
+	std::istringstream is(std::string(data, len), std::ios_base::binary);
+
+	// Read + validate signature
+	u32 signature = readU32(is);
+	if (signature != MTSCHEM_FILE_SIGNATURE)
+		throw LuaError("Not a valid MTS file (bad signature)");
+
+	u16 version = readU16(is);
+	if (version < 1 || version > MTSCHEM_FILE_VER_HIGHEST_READ)
+		throw LuaError("Unsupported MTS version");
+
+	// Read size
+	v3s16 size = readV3S16(is);
+	u32 nodecount = size.X * size.Y * size.Z;
+
+	// Read Y-slice probabilities
+	std::vector<u8> slice_probs(size.Y);
+	for (s16 y = 0; y < size.Y; y++)
+		slice_probs[y] = (version >= 3) ? readU8(is) : MTSCHEM_PROB_ALWAYS_OLD;
+
+	// Read node name table
+	u16 name_count = readU16(is);
+	std::vector<std::string> names(name_count);
+	for (u16 i = 0; i < name_count; i++)
+		names[i] = deSerializeString16(is);
+
+	// Fix old versions
+	if (version < 4) {
+		for (s16 y = 0; y < size.Y; y++)
+			slice_probs[y] >>= 1;
+	}
+
+	// Decompress bulk data
+	std::stringstream d_ss(std::ios_base::binary | std::ios_base::in | std::ios_base::out);
+	decompress(is, d_ss, MTSCHEM_MAPNODE_SER_FMT_VER);
+	std::string bulk = d_ss.str();
+
+	// Parse bulk: content_ids (u16), param1 (u8), param2 (u8) per node
+	u32 content_size = nodecount * 2;
+	const u8 *bp = (const u8 *)bulk.data();
+	std::vector<u16> content_ids(nodecount);
+	for (u32 i = 0; i < nodecount; i++)
+		content_ids[i] = readU16(bp + i * 2);
+
+	const u8 *param1s_src = bp + content_size;
+	const u8 *param2s_src = param1s_src + nodecount;
+
+	// Copy to mutable vectors (needed for version < 4 fixup)
+	std::vector<u8> param1s(param1s_src, param1s_src + nodecount);
+	std::vector<u8> param2s(param2s_src, param2s_src + nodecount);
+
+	// Fix probability range for v1-v3
+	if (version < 4) {
+		for (u32 i = 0; i < nodecount; i++)
+			param1s[i] >>= 1;
+	}
+
+	// Build Lua result table
+	lua_newtable(L);
+
+	// size field (v3s16 table with x, y, z)
+	lua_newtable(L);
+	lua_pushinteger(L, size.X); lua_setfield(L, -2, "x");
+	lua_pushinteger(L, size.Y); lua_setfield(L, -2, "y");
+	lua_pushinteger(L, size.Z); lua_setfield(L, -2, "z");
+	lua_setfield(L, -2, "size");
+
+	// yslice_prob field
+	lua_newtable(L);
+	for (s16 y = 0; y < size.Y; y++) {
+		lua_newtable(L);
+		lua_pushinteger(L, y); lua_setfield(L, -2, "ypos");
+		lua_pushinteger(L, (u32)(slice_probs[y] & MTSCHEM_PROB_MASK) * 2);
+		lua_setfield(L, -2, "prob");
+		lua_rawseti(L, -2, y + 1);
+	}
+	lua_setfield(L, -2, "yslice_prob");
+
+	// data field
+	lua_newtable(L);
+	u32 idx = 1;
+	for (s16 z = 0; z < size.Z; z++) {
+		for (s16 y = 0; y < size.Y; y++) {
+			for (s16 x = 0; x < size.X; x++) {
+				u32 i = z * size.Y * size.X + y * size.X + x;
+				u16 cid = content_ids[i];
+				if (cid >= names.size())
+					continue;
+				u8 p1 = param1s[i];
+				u8 p2 = param2s[i];
+
+				lua_newtable(L);
+				lua_pushstring(L, names[cid].c_str());
+				lua_setfield(L, -2, "name");
+				lua_pushinteger(L, x);
+				lua_setfield(L, -2, "x");
+				lua_pushinteger(L, y);
+				lua_setfield(L, -2, "y");
+				lua_pushinteger(L, z);
+				lua_setfield(L, -2, "z");
+				lua_pushinteger(L, (u32)(p1 & MTSCHEM_PROB_MASK) * 2);
+				lua_setfield(L, -2, "prob");
+				lua_pushinteger(L, p2);
+				lua_setfield(L, -2, "param2");
+				if (p1 & MTSCHEM_FORCE_PLACE) {
+					lua_pushboolean(L, 1);
+					lua_setfield(L, -2, "force_place");
+				}
+				lua_rawseti(L, -2, idx);
+				idx++;
+			}
+		}
+	}
+	lua_setfield(L, -2, "data");
+	return 1;
+}
+
+// serialize_schematic(schematic, format, options)
+int ModApiClient::l_serialize_schematic(lua_State *L)
+{
+	// Get format
+	std::string format = "mts";
+	if (lua_isstring(L, 2))
+		format = lua_tostring(L, 2);
+
+	// Parse input table (size, data, optional yslice_prob)
+	luaL_checktype(L, 1, LUA_TTABLE);
+
+	lua_getfield(L, 1, "size");
+	v3s16 size = check_v3s16(L, -1);
+	lua_pop(L, 1);
+
+	lua_getfield(L, 1, "data");
+	luaL_checktype(L, -1, LUA_TTABLE);
+	u32 nodecount = size.X * size.Y * size.Z;
+
+	if (format == "lua") {
+		// Serialize to Lua table string format
+		bool use_comments = getboolfield_default(L, 3, "lua_use_comments", false);
+		u32 indent = getintfield_default(L, 3, "lua_num_indent_spaces", 0);
+
+		std::ostringstream os(std::ios_base::binary);
+		// Write Lua table
+		os << "return {";
+		if (use_comments) os << " -- schematic";
+		os << "\n";
+
+		os << "size = {x=" << size.X << ",y=" << size.Y << ",z=" << size.Z << "},"; if (use_comments) os << " -- size"; os << "\n";
+
+		os << "data = {";
+		std::string indent_str(indent, ' ');
+		// Iterate through data array
+		for (u32 i = 0; i < nodecount; i++) {
+			// Get each entry
+			lua_rawgeti(L, -1, i + 1);
+			lua_getfield(L, -1, "name");
+			std::string name = lua_tostring(L, -1);
+			lua_pop(L, 1);
+
+			u8 param1 = MTSCHEM_PROB_ALWAYS;
+			u8 param2 = 0;
+			bool force_place = false;
+
+			lua_getfield(L, -1, "prob");
+			if (lua_isnumber(L, -1))
+				param1 = lua_tointeger(L, -1) >> 1;
+			lua_pop(L, 1);
+
+			lua_getfield(L, -1, "param2");
+			if (lua_isnumber(L, -1))
+				param2 = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+
+			lua_getfield(L, -1, "force_place");
+			if (lua_toboolean(L, -1))
+				force_place = true;
+			lua_pop(L, 1);
+
+			lua_pop(L, 1); // pop entry
+
+			os << indent_str << "{name=\"" << name << "\",prob=" << (u32)param1 * 2
+				<< ",param2=" << (u32)param2;
+			if (force_place)
+				os << ",force_place=true";
+			os << "},";
+			if (use_comments && i % 100 == 0)
+				os << " -- " << (i + 1) << "/" << nodecount;
+			os << "\n";
+		}
+		os << "},\n}\n";
+		lua_pop(L, 1); // pop data table
+		std::string result = os.str();
+		lua_pushlstring(L, result.data(), result.size());
+		return 1;
+	}
+
+	// Default: serialize to MTS binary format
+	//// Collect unique node names
+	std::unordered_map<std::string, u16> name_id_map;
+	std::vector<std::string> names;
+	std::vector<u16> content_ids(nodecount);
+	std::vector<u8> param1s(nodecount);
+	std::vector<u8> param2s(nodecount);
+
+	for (u32 i = 0; i < nodecount; i++) {
+		lua_rawgeti(L, -1, i + 1);
+		luaL_checktype(L, -1, LUA_TTABLE);
+
+		// Read name
+		lua_getfield(L, -1, "name");
+		std::string name = luaL_checkstring(L, -1);
+		lua_pop(L, 1);
+
+		// Insert or lookup name
+		auto it = name_id_map.find(name);
+		if (it != name_id_map.end()) {
+			content_ids[i] = it->second;
+		} else {
+			u16 id = names.size();
+			names.push_back(name);
+			name_id_map[name] = id;
+			content_ids[i] = id;
+		}
+
+		// Read prob/param1
+		u8 param1 = MTSCHEM_PROB_ALWAYS;
+		lua_getfield(L, -1, "prob");
+		if (lua_isnumber(L, -1))
+			param1 = lua_tointeger(L, -1) >> 1;
+		lua_pop(L, 1);
+
+		// Read force_place
+		lua_getfield(L, -1, "force_place");
+		if (lua_toboolean(L, -1))
+			param1 |= MTSCHEM_FORCE_PLACE;
+		lua_pop(L, 1);
+
+		param1s[i] = param1;
+
+		// Read param2
+		lua_getfield(L, -1, "param2");
+		param2s[i] = lua_isnumber(L, -1) ? lua_tointeger(L, -1) : 0;
+		lua_pop(L, 1);
+
+		lua_pop(L, 1); // pop entry
+	}
+	lua_pop(L, 1); // pop data table
+
+	//// Build MTS binary output
+	std::ostringstream os(std::ios_base::binary);
+
+	// Header: signature, version, size
+	writeU32(os, MTSCHEM_FILE_SIGNATURE);
+	writeU16(os, MTSCHEM_FILE_VER_HIGHEST_WRITE);
+	writeU16(os, size.X);
+	writeU16(os, size.Y);
+	writeU16(os, size.Z);
+
+	// Y-slice probabilities (all always-place)
+	for (s16 y = 0; y < size.Y; y++)
+		writeU8(os, MTSCHEM_PROB_ALWAYS);
+
+	// Node name table
+	writeU16(os, names.size());
+	for (u16 i = 0; i < names.size(); i++) {
+		writeU16(os, names[i].size());
+		os.write(names[i].data(), names[i].size());
+	}
+
+	// Bulk node data: all content_ids first, then all param1, then all param2
+	u32 content_size = nodecount * 2;
+	u32 bulk_size = content_size + nodecount * 2;
+	std::vector<u8> bulk(bulk_size, 0);
+	for (u32 i = 0; i < nodecount; i++) {
+		writeU16(&bulk[i * 2], content_ids[i]);
+		bulk[content_size + i] = param1s[i];
+		bulk[content_size + nodecount + i] = param2s[i];
+	}
+
+	// Compress bulk data
+	std::ostringstream cs(std::ios_base::binary);
+	compress(bulk.data(), bulk.size(), cs, MTSCHEM_MAPNODE_SER_FMT_VER, -1);
+	os << cs.str();
+
+	std::string result = os.str();
+	lua_pushlstring(L, result.data(), result.size());
+	return 1;
+}
+
+// show_toast(text, type)
+int ModApiClient::l_show_toast(lua_State *L)
+{
+	std::string text = luaL_checkstring(L, 1);
+	std::string type = luaL_optstring(L, 2, "info");
+
+	auto *tm = getClient(L)->getToastManager();
+	if (tm) {
+		tm->addToast(utf8_to_wide(text), ToastManager::stringToType(type));
+	}
+	return 0;
+}
+
+// send_raw_packet(command, raw_payload)
+int ModApiClient::l_send_raw_packet(lua_State *L)
+{
+	u16 command;
+	std::string payload;
+
+	if (lua_isnumber(L, 1)) {
+		command = luaL_checkint(L, 1);
+	} else if (lua_isstring(L, 1)) {
+		const char *name = luaL_checkstring(L, 1);
+		lua_getglobal(L, "core");
+		lua_getfield(L, -1, "TOCLIENT");
+		lua_getfield(L, -1, name);
+		if (lua_isnumber(L, -1)) {
+			command = lua_tointeger(L, -1);
+		} else {
+			lua_pop(L, 1);
+			lua_getfield(L, -2, "TOSERVER");
+			lua_getfield(L, -1, name);
+			if (lua_isnumber(L, -1)) {
+				command = lua_tointeger(L, -1);
+			} else {
+				lua_pop(L, 4);
+				throw LuaError(std::string("Unknown packet name: ") + name);
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 2);
+	} else {
+		throw LuaError("Expected number or string for command");
+	}
+
+	if (lua_isstring(L, 2)) {
+		size_t len;
+		const char *data = luaL_checklstring(L, 2, &len);
+		payload.assign(data, len);
+	} else if (!lua_isnone(L, 2)) {
+		throw LuaError("Expected string for payload");
+	}
+
+	Client *client = getClient(L);
+	ClientScripting *script = dynamic_cast<ClientScripting*>(
+			client->getScript());
+	if (!script)
+		return 0;
+
+	bool ok = script->send_raw_packet(command, payload);
+	if (!ok)
+		throw LuaError("Failed to send raw packet: invalid or blacklisted command");
+	return 0;
+}
+
+// send_raw_mtp_packet(payload)
+// Sends a raw MTP/UDP packet directly to the server.
+// payload: raw bytes for the complete UDP datagram (including PROTOCOL_ID header)
+int ModApiClient::l_send_raw_mtp_packet(lua_State *L)
+{
+	size_t len;
+	const char *data = luaL_checklstring(L, 1, &len);
+	if (len == 0)
+		return 0;
+
+	Client *client = getClient(L);
+	client->getConnection().sendRawMTP(PEER_ID_SERVER,
+			reinterpret_cast<const u8*>(data), (u32)len);
+	return 0;
+}
+
+// get_peer_id()
+int ModApiClient::l_get_peer_id(lua_State *L)
+{
+	Client *client = getClient(L);
+	lua_pushinteger(L, client->getConnection().GetPeerID());
+	return 1;
+}
+
+// detach()
+int ModApiClient::l_detach(lua_State *L)
+{
+	RenderingEngine *re = RenderingEngine::get();
+	if (re)
+		re->setDetached(true);
+	return 0;
+}
+
+// reattach()
+int ModApiClient::l_reattach(lua_State *L)
+{
+	RenderingEngine *re = RenderingEngine::get();
+	if (re)
+		re->setDetached(false);
+	return 0;
+}
+
+// cheat_menu_set_visible(visible)
+int ModApiClient::l_cheat_menu_set_visible(lua_State *L)
+{
+	bool visible = readParam<bool>(L, 1);
+	if (g_game) {
+		g_game->setCheatLayerActive(visible);
+	} else {
+		if (visible)
+			g_cheat_layer_force_hidden = false;
+		g_cheat_layer_active = visible;
+		auto *device = RenderingEngine::get_raw_device();
+		if (device) {
+			if (auto *cur = device->getCursorControl())
+				cur->setVisible(visible);
+		}
+		if (!visible && g_cheat_menu)
+			g_cheat_menu->onLayerClosed();
+	}
+	return 0;
+}
+
+// get_quick_menu_entries()
+int ModApiClient::l_get_quick_menu_entries(lua_State *L)
+{
+	if (!g_cheat_menu) {
+		lua_newtable(L);
+		return 1;
+	}
+	return g_cheat_menu->getQuickMenuEntries(L);
+}
+
+// activate_quick_menu_entry(index)
+int ModApiClient::l_activate_quick_menu_entry(lua_State *L)
+{
+	if (!g_cheat_menu) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	return g_cheat_menu->activateQuickMenuEntry(L);
+}
+
+// open_inventory()
+int ModApiClient::l_open_inventory(lua_State *L)
+{
+	if (g_game)
+		g_game->m_game_formspec.showPlayerInventory(nullptr);
+	return 0;
+}
+
+// quick_menu_open([search])
+int ModApiClient::l_quick_menu_open(lua_State *L)
+{
+	std::string search = readParam<std::string>(L, 1, "");
+	if (g_cheat_menu)
+		g_cheat_menu->openQuickPalette(search);
+	return 0;
+}
+
+// quick_menu_close()
+int ModApiClient::l_quick_menu_close(lua_State *L)
+{
+	if (g_cheat_menu && g_cheat_menu->isQuickPaletteActive())
+		g_cheat_menu->toggleQuickPalette();
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Layer API (unified UI layers: cheat layer, big map, Lua-registered layers)
+// ---------------------------------------------------------------------------
+
+static LayerManager *checkLayerManager(lua_State *L)
+{
+	if (!g_layer_manager)
+		luaL_error(L, "layer API: no layer manager available");
+	return g_layer_manager;
+}
+
+// layer_show(id)
+int ModApiClient::l_layer_show(lua_State *L)
+{
+	std::string id = luaL_checkstring(L, 1);
+	LayerManager *mgr = checkLayerManager(L);
+	mgr->setVisible(id, true);
+	lua_pushboolean(L, mgr->isVisible(id));
+	return 1;
+}
+
+// layer_hide(id)
+int ModApiClient::l_layer_hide(lua_State *L)
+{
+	std::string id = luaL_checkstring(L, 1);
+	LayerManager *mgr = checkLayerManager(L);
+	mgr->setVisible(id, false);
+	lua_pushboolean(L, !mgr->isVisible(id));
+	return 1;
+}
+
+// layer_toggle(id)
+int ModApiClient::l_layer_toggle(lua_State *L)
+{
+	std::string id = luaL_checkstring(L, 1);
+	LayerManager *mgr = checkLayerManager(L);
+	mgr->setVisible(id, !mgr->isVisible(id));
+	lua_pushboolean(L, mgr->isVisible(id));
+	return 1;
+}
+
+// layer_is_visible(id)
+int ModApiClient::l_layer_is_visible(lua_State *L)
+{
+	std::string id = luaL_checkstring(L, 1);
+	lua_pushboolean(L, g_layer_manager && g_layer_manager->isVisible(id));
+	return 1;
+}
+
+// get_layers() → array of {id, title, type, visible}
+int ModApiClient::l_get_layers(lua_State *L)
+{
+	if (!g_layer_manager) {
+		lua_newtable(L);
+		return 1;
+	}
+	lua_newtable(L);
+	int idx = 1;
+	for (const auto &l : g_layer_manager->getLayers()) {
+		lua_newtable(L);
+		lua_pushstring(L, l.id.c_str());
+		lua_setfield(L, -2, "id");
+		lua_pushstring(L, l.title.c_str());
+		lua_setfield(L, -2, "title");
+		lua_pushstring(L, l.type == AlLayer::Type::CONTAINER ? "container" : "fullscreen");
+		lua_setfield(L, -2, "type");
+		lua_pushboolean(L, l.isVisible());
+		lua_setfield(L, -2, "visible");
+		lua_rawseti(L, -2, idx++);
+	}
+	return 1;
+}
+
+// register_layer(id, { title=, key=, on_draw=, on_input= })
+int ModApiClient::l_register_layer(lua_State *L)
+{
+	LayerManager *mgr = checkLayerManager(L);
+	std::string id = luaL_checkstring(L, 1);
+	if (!lua_istable(L, 2))
+		return luaL_error(L, "register_layer: def must be a table");
+	if (mgr->getLayer(id))
+		return luaL_error(L, "register_layer: layer '%s' already exists", id.c_str());
+
+	AlLayer layer;
+	layer.id = id;
+	lua_getfield(L, 2, "title");
+	layer.title = lua_isstring(L, -1) ? lua_tostring(L, -1) : id;
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "opaque");
+	layer.opaque = lua_isboolean(L, -1) && lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "key");
+	layer.key_name = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+	lua_pop(L, 1);
+	lua_getfield(L, 2, "on_draw");
+	if (lua_isfunction(L, -1))
+		layer.on_draw = luaL_ref(L, LUA_REGISTRYINDEX);
+	else
+		lua_pop(L, 1);
+	lua_getfield(L, 2, "on_input");
+	if (lua_isfunction(L, -1))
+		layer.on_input = luaL_ref(L, LUA_REGISTRYINDEX);
+	else
+		lua_pop(L, 1);
+
+	mgr->registerLayer(layer);
 	lua_pushboolean(L, true);
 	return 1;
 }
 
-int ModApiClient::l_get_description(lua_State* L) {
-	getClient(L)->getScript()->get_description();
-	lua_pushboolean(L, true);
+// draw_rect(x, y, w, h, color) — 2D immediate-mode draw queue for fullscreen
+// Lua content (drawn while a cheat desktop / layer on_draw callback runs).
+int ModApiClient::l_draw_rect(lua_State *L)
+{
+	if (!g_cheat_menu)
+		return luaL_error(L, "draw_rect: no cheat menu");
+	return g_cheat_menu->queueDrawRect(L);
+}
+
+// draw_text(text, x, y, size, color)
+int ModApiClient::l_draw_text(lua_State *L)
+{
+	if (!g_cheat_menu)
+		return luaL_error(L, "draw_text: no cheat menu");
+	return g_cheat_menu->queueDrawText(L);
+}
+
+// draw_texture(texture, x, y, w, h)
+int ModApiClient::l_draw_texture(lua_State *L)
+{
+	if (!g_cheat_menu)
+		return luaL_error(L, "draw_texture: no cheat menu");
+	return g_cheat_menu->queueDrawTexture(L);
+}
+
+// get_cheat_desktops()
+int ModApiClient::l_get_cheat_desktops(lua_State *L)
+{
+	if (!g_cheat_menu) {
+		lua_newtable(L);
+		return 1;
+	}
+	return g_cheat_menu->getCheatDesktops(L);
+}
+
+// cheat_desktop_show(id)
+int ModApiClient::l_cheat_desktop_show(lua_State *L)
+{
+	if (!g_cheat_menu) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	return g_cheat_menu->setCheatDesktop(L);
+}
+
+// register_cheat_desktop(id, { title=, fullscreen=, on_draw=, on_input= })
+int ModApiClient::l_register_cheat_desktop(lua_State *L)
+{
+	if (!g_cheat_menu)
+		return luaL_error(L, "register_cheat_desktop: no cheat menu");
+	return g_cheat_menu->registerCheatDesktop(L);
+}
+
+// get_data_path()
+int ModApiClient::l_get_data_path(lua_State *L)
+{
+	std::string dir = porting::path_user + DIR_DELIM "data";
+	std::string clean = fs::AbsolutePath(dir);
+	if (!clean.empty())
+		dir = clean;
+	fs::CreateAllDirs(dir);
+	lua_pushstring(L, dir.c_str());
+	return 1;
+}
+
+// get_serverdata_path()
+int ModApiClient::l_get_serverdata_path(lua_State *L)
+{
+	Client *client = getClient(L);
+	std::string addr = client->getAddressName();
+	std::string server_id;
+	if (addr.empty() || client->isSingleplayer()) {
+		server_id = "singleplayer";
+	} else {
+		server_id = addr + "_"
+			+ std::to_string(client->getServerAddress().getPort());
+	}
+	std::string dir = porting::path_user + DIR_DELIM "data"
+		+ DIR_DELIM "server" + DIR_DELIM + server_id;
+	fs::CreateAllDirs(dir);
+	std::string clean = fs::AbsolutePath(dir);
+	if (!clean.empty())
+		dir = clean;
+	lua_pushstring(L, dir.c_str());
+	return 1;
+}
+
+// append_file(path, data)
+int ModApiClient::l_append_file(lua_State *L)
+{
+	std::string path = luaL_checkstring(L, 1);
+	{
+		std::string normalized = fs::AbsolutePath(path);
+		if (!normalized.empty())
+			path = normalized;
+	}
+	if (path.find("..") != std::string::npos) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	size_t len;
+	const char *data = luaL_checklstring(L, 2, &len);
+	lua_pushboolean(L, fs::AppendFile(path, std::string_view(data, len)));
+	return 1;
+}
+
+// --- Extended API from DevClient ---
+
+// start_dig(pos)
+int ModApiClient::l_start_dig(lua_State *L)
+{
+	v3s16 p = floatToInt(checkFloatPos(L, 1), BS);
+	PointedThing pointed;
+	pointed.type = POINTEDTHING_NODE;
+	pointed.node_abovesurface = p;
+	pointed.node_undersurface = p;
+	getClient(L)->interact(INTERACT_START_DIGGING, pointed);
+	return 0;
+}
+
+// get_item_damage_against(slot_index, object_id)
+int ModApiClient::l_get_item_damage_against(lua_State *L)
+{
+	int slot = luaL_checkinteger(L, 1) - 1;
+	Client *client = getClient(L);
+	InventoryLocation loc;
+	loc.setCurrentPlayer();
+	Inventory *inv = client->getInventory(loc);
+	if (!inv)
+		return 0;
+	InventoryList *main = inv->getList("main");
+	if (!main || slot < 0 || (u32)slot >= main->getSize())
+		return 0;
+	const ItemStack &stack = main->getItem(slot);
+	if (stack.empty())
+		return 0;
+	const ToolCapabilities &tcaps = stack.getToolCapabilities(client->idef());
+	// Return the sum of damage group values as a simple damage metric
+	s32 total = 0;
+	for (const auto &dg : tcaps.damageGroups)
+		total += dg.second;
+	lua_pushinteger(L, total);
+	return 1;
+}
+
+// get_item_dig_time(slot_index, nodepos) — uses engine's getDigParams
+int ModApiClient::l_get_item_dig_time(lua_State *L)
+{
+	int slot = luaL_checkinteger(L, 1) - 1;
+	v3s16 nodepos = floatToInt(check_v3f(L, 2), 1.0f);
+	Client *client = getClient(L);
+	InventoryLocation loc;
+	loc.setCurrentPlayer();
+	Inventory *inv = client->getInventory(loc);
+	if (!inv)
+		return 0;
+	InventoryList *main = inv->getList("main");
+	if (!main || slot < 0 || (u32)slot >= main->getSize())
+		return 0;
+	const ItemStack &stack = main->getItem(slot);
+	if (stack.empty())
+		return 0;
+	bool ok;
+	MapNode node = client->CSMGetNode(nodepos, &ok);
+	if (!ok)
+		return 0;
+	const ContentFeatures &def = client->getNodeDefManager()->get(node);
+	const ToolCapabilities &tcaps = stack.getToolCapabilities(client->idef());
+	DigParams params = getDigParams(def.groups, &tcaps);
+	lua_pushnumber(L, params.time);
+	return 1;
+}
+
+// set_fast_speed(speed)
+int ModApiClient::l_set_fast_speed(lua_State *L)
+{
+	float speed = readParam<float>(L, 1);
+	g_settings->setFloat("movement_speed_fast", speed);
+	return 0;
+}
+
+// set_node_esp_list({names})
+int ModApiClient::l_set_node_esp_list(lua_State *L)
+{
+	std::vector<std::string> names;
+	luaL_checktype(L, 1, LUA_TTABLE);
+	lua_pushnil(L);
+	while (lua_next(L, 1)) {
+		names.emplace_back(luaL_checkstring(L, -1));
+		lua_pop(L, 1);
+	}
+	getClient(L)->setNodeEspList(names);
+	return 0;
+}
+
+// get_node_esp_positions() -> table of {x,y,z} node positions matching the ESP list
+int ModApiClient::l_get_node_esp_positions(lua_State *L)
+{
+	Client *client = getClient(L);
+	const auto &node_list = client->getNodeEspList();
+	lua_newtable(L);
+	if (node_list.empty())
+		return 1;
+
+	ClientMap &map = client->getEnv().getClientMap();
+	const NodeDefManager *ndef = client->getNodeDefManager();
+
+	v3s16 cam_pos = floatToInt(
+		client->getEnv().getLocalPlayer()->getPosition(), BS);
+	v3s16 blocks_min, blocks_max;
+	map.getBlocksInViewRange(cam_pos, &blocks_min, &blocks_max);
+
+	int idx = 1;
+	for (s16 bz = blocks_min.Z; bz <= blocks_max.Z; bz++)
+	for (s16 by = blocks_min.Y; by <= blocks_max.Y; by++)
+	for (s16 bx = blocks_min.X; bx <= blocks_max.X; bx++) {
+		MapBlock *block = map.getBlockNoCreateNoEx(v3s16(bx, by, bz));
+		if (!block)
+			continue;
+		v3s16 base = block->getPosRelative();
+		for (s16 nz = 0; nz < MAP_BLOCKSIZE; nz++)
+		for (s16 ny = 0; ny < MAP_BLOCKSIZE; ny++)
+		for (s16 nx = 0; nx < MAP_BLOCKSIZE; nx++) {
+			v3s16 p = base + v3s16(nx, ny, nz);
+			MapNode n = map.getNode(p);
+			const std::string &node_name = ndef->get(n).name;
+			if (node_list.find(node_name) == node_list.end())
+				continue;
+			push_v3s16(L, p);
+			lua_rawseti(L, -2, idx++);
+		}
+	}
+	return 1;
+}
+
+// get_all_objects()
+int ModApiClient::l_get_all_objects(lua_State *L)
+{
+	ClientEnvironment &env = getClient(L)->getEnv();
+	auto pos = env.getLocalPlayer()->getPosition();
+	std::vector<DistanceSortedActiveObject> objs;
+	env.getActiveObjects(pos, 1e8f, objs);
+	int i = 0;
+	lua_createtable(L, objs.size(), 0);
+	for (const auto &obj : objs) {
+		push_objectRef(L, obj.obj->getId());
+		lua_rawseti(L, -2, ++i);
+	}
+	return 1;
+}
+
+// get_active_object_by_id(id)
+int ModApiClient::l_get_active_object_by_id(lua_State *L)
+{
+	u16 id = luaL_checkinteger(L, 1);
+	ClientActiveObject *obj = getClient(L)->getEnv().getActiveObject(id);
+	if (obj)
+		push_objectRef(L, obj->getId());
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+// all_loaded_nodes() -> table of positions
+int ModApiClient::l_all_loaded_nodes(lua_State *L)
+{
+	Client *client = getClient(L);
+	ClientMap &map = client->getEnv().getClientMap();
+	v3s16 cam_pos = floatToInt(
+		client->getEnv().getLocalPlayer()->getPosition(), BS);
+	v3s16 blocks_min, blocks_max;
+	map.getBlocksInViewRange(cam_pos, &blocks_min, &blocks_max);
+	lua_newtable(L);
+	int idx = 1;
+	for (s16 z = blocks_min.Z; z <= blocks_max.Z; z++)
+	for (s16 y = blocks_min.Y; y <= blocks_max.Y; y++)
+	for (s16 x = blocks_min.X; x <= blocks_max.X; x++) {
+		MapBlock *block = map.getBlockNoCreateNoEx(v3s16(x, y, z));
+		if (!block)
+			continue;
+		v3s16 node_min = v3s16(x, y, z) * MAP_BLOCKSIZE;
+		for (s16 nz = 0; nz < MAP_BLOCKSIZE; nz++)
+		for (s16 ny = 0; ny < MAP_BLOCKSIZE; ny++)
+		for (s16 nx = 0; nx < MAP_BLOCKSIZE; nx++) {
+			push_v3s16(L, node_min + v3s16(nx, ny, nz));
+			lua_rawseti(L, -2, idx++);
+		}
+	}
+	return 1;
+}
+
+// nodes_at_block_pos(pos) -> table of positions
+int ModApiClient::l_nodes_at_block_pos(lua_State *L)
+{
+	v3s16 bpos = floatToInt(check_v3f(L, 1), 1.0f);
+	MapBlock *block = getClient(L)->getEnv().getClientMap()
+		.getBlockNoCreateNoEx(bpos);
+	if (!block) {
+		lua_pushnil(L);
+		return 1;
+	}
+	v3s16 node_min = bpos * MAP_BLOCKSIZE;
+	lua_newtable(L);
+	int idx = 1;
+	for (s16 nz = 0; nz < MAP_BLOCKSIZE; nz++)
+	for (s16 ny = 0; ny < MAP_BLOCKSIZE; ny++)
+	for (s16 nx = 0; nx < MAP_BLOCKSIZE; nx++) {
+		push_v3s16(L, node_min + v3s16(nx, ny, nz));
+		lua_rawseti(L, -2, idx++);
+	}
+	return 1;
+}
+
+// can_attack(object_id)
+int ModApiClient::l_can_attack(lua_State *L)
+{
+	u16 id = luaL_checkinteger(L, 1);
+	ClientActiveObject *obj = getClient(L)->getEnv().getActiveObject(id);
+	lua_pushboolean(L, obj != nullptr);
+	return 1;
+}
+
+// get_server_url()
+int ModApiClient::l_get_server_url(lua_State *L)
+{
+	Client *client = getClient(L);
+	if (client->isSingleplayer())
+		return 0;
+	lua_pushstring(L, client->getAddressName().c_str());
+	return 1;
+}
+
+// get_node_name(pos)
+int ModApiClient::l_get_node_name(lua_State *L)
+{
+	v3s16 p = floatToInt(check_v3f(L, 1), 1.0f);
+	bool pos_ok;
+	MapNode n = getClient(L)->CSMGetNode(p, &pos_ok);
+	if (!pos_ok)
+		return 0;
+	const ContentFeatures &def = getClient(L)->getNodeDefManager()->get(n);
+	lua_pushstring(L, def.name.c_str());
+	return 1;
+}
+
+// get_node_raw(pos) — mirror of server-side core.get_node_raw
+// Returns content, param1, param2, pos_ok (content is CONTENT_IGNORE and
+// pos_ok is false when the position is not loaded).
+int ModApiClient::l_get_node_raw(lua_State *L)
+{
+	// mirrors the server-side implementation (3 separate numbers, not a table)
+	double x = lua_tonumber(L, 1);
+	double y = lua_tonumber(L, 2);
+	double z = lua_tonumber(L, 3);
+	v3s16 pos = doubleToInt(v3d(x, y, z), 1.0);
+
+	bool pos_ok;
+	MapNode n = getClient(L)->CSMGetNode(pos, &pos_ok);
+	lua_pushinteger(L, n.getContent());
+	lua_pushinteger(L, n.getParam1());
+	lua_pushinteger(L, n.getParam2());
+	lua_pushboolean(L, pos_ok);
+	return 4;
+}
+
+// get_day_count() — mirror of server-side core.get_day_count
+int ModApiClient::l_get_day_count(lua_State *L)
+{
+	lua_pushnumber(L, getClient(L)->getEnv().getDayCount());
+	return 1;
+}
+
+// get_loaded_blocks() — mirror of server-side core.get_loaded_blocks
+// Returns positions of all blocks the client currently has loaded.
+int ModApiClient::l_get_loaded_blocks(lua_State *L)
+{
+	Client *client = getClient(L);
+	ClientMap &map = client->getEnv().getClientMap();
+	v3s16 cam_pos = floatToInt(
+		client->getEnv().getLocalPlayer()->getPosition(), BS);
+	v3s16 blocks_min, blocks_max;
+	map.getBlocksInViewRange(cam_pos, &blocks_min, &blocks_max);
+	lua_newtable(L);
+	int idx = 1;
+	for (s16 z = blocks_min.Z; z <= blocks_max.Z; z++)
+	for (s16 y = blocks_min.Y; y <= blocks_max.Y; y++)
+	for (s16 x = blocks_min.X; x <= blocks_max.X; x++) {
+		MapBlock *block = map.getBlockNoCreateNoEx(v3s16(x, y, z));
+		if (!block)
+			continue;
+		push_v3s16(L, v3s16(x, y, z));
+		lua_rawseti(L, -2, idx++);
+	}
+	return 1;
+}
+
+// get_modnames([load_order]) — mirror of server-side core.get_modnames
+// Returns the names of the client's loaded mods.
+int ModApiClient::l_get_modnames(lua_State *L)
+{
+	const bool use_load_order = readParam<bool>(L, 1, false);
+
+	std::vector<std::string> modlist;
+	for (const ModSpec &mod : getClient(L)->getMods())
+		modlist.emplace_back(mod.name);
+
+	if (!use_load_order)
+		std::sort(modlist.begin(), modlist.end());
+
+	lua_createtable(L, modlist.size(), 0);
+	for (u16 i = 0; i < modlist.size(); i++) {
+		lua_pushstring(L, modlist[i].c_str());
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+// get_node_boxes(box_type, pos[, node]) — mirror of server-side core.get_node_boxes
+int ModApiClient::l_get_node_boxes(lua_State *L)
+{
+	std::string box_type = luaL_checkstring(L, 1);
+	if (box_type != "node_box" && box_type != "collision_box"
+			&& box_type != "selection_box")
+		luaL_error(L, "get_node_boxes: box_type is invalid. Allowed values: \"node_box\", \"collision_box\", \"selection_box\"");
+
+	v3s16 pos = read_v3s16(L, 2);
+	Client *client = getClient(L);
+	Map &map = client->getEnv().getMap();
+
+	MapNode n;
+	if (lua_istable(L, 3))
+		n = readnode(L, 3);
+	else {
+		bool pos_ok;
+		n = client->CSMGetNode(pos, &pos_ok);
+		if (!pos_ok) {
+			lua_pushnil(L);
+			return 1;
+		}
+	}
+
+	u8 neighbors = n.getNeighbors(pos, &map);
+	const NodeDefManager *ndef = client->getNodeDefManager();
+
+	std::vector<aabb3f> boxes;
+	if (box_type == "node_box")
+		n.getNodeBoxes(ndef, &boxes, neighbors);
+	else if (box_type == "collision_box")
+		n.getCollisionBoxes(ndef, &boxes, neighbors);
+	else
+		n.getSelectionBoxes(ndef, &boxes, neighbors);
+
+	push_aabb3f_vector(L, boxes, BS);
+
+	return 1;
+}
+
+// get_connected_players() — mirror of server-side core.get_connected_players
+// Returns ObjectRefs for all players the client has as active objects
+// (including the local player).
+int ModApiClient::l_get_connected_players(lua_State *L)
+{
+	ClientEnvironment &env = getClient(L)->getEnv();
+	auto pos = env.getLocalPlayer()->getPosition();
+	std::vector<DistanceSortedActiveObject> objs;
+	env.getActiveObjects(pos, 1e8f, objs);
+
+	lua_newtable(L);
+	int i = 0;
+	for (const auto &obj : objs) {
+		GenericCAO *cao = dynamic_cast<GenericCAO *>(obj.obj);
+		if (!cao || !cao->isPlayer())
+			continue;
+		push_objectRef(L, cao->getId());
+		lua_rawseti(L, -2, ++i);
+	}
+	return 1;
+}
+
+// get_player_by_name(name) — mirror of server-side core.get_player_by_name
+int ModApiClient::l_get_player_by_name(lua_State *L)
+{
+	std::string name = luaL_checkstring(L, 1);
+	ClientEnvironment &env = getClient(L)->getEnv();
+	auto pos = env.getLocalPlayer()->getPosition();
+	std::vector<DistanceSortedActiveObject> objs;
+	env.getActiveObjects(pos, 1e8f, objs);
+
+	for (const auto &obj : objs) {
+		GenericCAO *cao = dynamic_cast<GenericCAO *>(obj.obj);
+		if (!cao || !cao->isPlayer() || cao->getName() != name)
+			continue;
+		push_objectRef(L, cao->getId());
+		return 1;
+	}
+	return 0;
+}
+
+// get_objects_in_area(minp, maxp) — mirror of server-side core.get_objects_in_area
+// Returns ObjectRefs for all active objects whose position is within the box.
+int ModApiClient::l_get_objects_in_area(lua_State *L)
+{
+	v3f minp = read_v3f(L, 1) * BS;
+	v3f maxp = read_v3f(L, 2) * BS;
+	aabb3f box(minp, maxp);
+	box.repair();
+
+	ClientEnvironment &env = getClient(L)->getEnv();
+	auto pos = env.getLocalPlayer()->getPosition();
+	std::vector<DistanceSortedActiveObject> objs;
+	env.getActiveObjects(pos, 1e8f, objs);
+
+	lua_newtable(L);
+	int i = 0;
+	for (const auto &obj : objs) {
+		if (!box.isPointInside(obj.obj->getPosition()))
+			continue;
+		push_objectRef(L, obj.obj->getId());
+		lua_rawseti(L, -2, ++i);
+	}
+	return 1;
+}
+
+// Client-side port of ServerEnvironment::findSunlight (serverenvironment.cpp:672).
+// Flood-fills the neighborhood of `pos` to find the highest sunlight value that
+// can reach it. Only walks already-loaded client map data.
+static u8 clientFindSunlight(Client *client, v3s16 pos)
+{
+	// Directions for neighboring nodes with specified order
+	static const v3s16 dirs[] = {
+		v3s16(-1, 0, 0), v3s16(1, 0, 0), v3s16(0, 0, -1), v3s16(0, 0, 1),
+		v3s16(0, -1, 0), v3s16(0, 1, 0)
+	};
+
+	const NodeDefManager *ndef = client->getNodeDefManager();
+	ClientMap &map = client->getEnv().getClientMap();
+
+	// found_light remembers the highest known sunlight value at pos
+	u8 found_light = 0;
+
+	struct stack_entry {
+		v3s16 pos;
+		s16 dist;
+	};
+	std::stack<stack_entry> stack;
+	stack.push({pos, 0});
+
+	std::unordered_map<s64, s8> dists;
+	dists[MapDatabase::getBlockAsInteger(pos)] = 0;
+
+	while (!stack.empty()) {
+		struct stack_entry e = stack.top();
+		stack.pop();
+
+		v3s16 currentPos = e.pos;
+		s8 dist = e.dist + 1;
+
+		for (const v3s16 &off : dirs) {
+			v3s16 neighborPos = currentPos + off;
+			s64 neighborHash = MapDatabase::getBlockAsInteger(neighborPos);
+
+			// Do not walk neighborPos multiple times unless the distance to the start
+			// position is shorter
+			auto it = dists.find(neighborHash);
+			if (it != dists.end() && dist >= it->second)
+				continue;
+
+			bool is_position_ok;
+			MapNode node = map.getNode(neighborPos, &is_position_ok);
+			if (!is_position_ok)
+				continue; // block not loaded client-side
+
+			const ContentFeatures &def = ndef->get(node);
+			if (!def.sunlight_propagates) {
+				// Do not test propagation here again
+				dists[neighborHash] = -1;
+				continue;
+			}
+
+			// Sunlight could have come from here
+			dists[neighborHash] = dist;
+			u8 daylight = node.param1 & 0x0f;
+
+			// In the special case where sunlight shines from above and thus
+			// does not decrease with upwards distance, daylight is always
+			// bigger than nightlight, which never reaches 15
+			int possible_finlight = daylight - dist;
+			if (possible_finlight <= found_light) {
+				// Light from here cannot make a brighter light at currentPos than
+				// found_light
+				continue;
+			}
+
+			u8 nightlight = node.param1 >> 4;
+			if (daylight > nightlight) {
+				// Found a valid daylight
+				found_light = possible_finlight;
+			} else {
+				// Sunlight may be darker, so walk the neighbors
+				stack.push({neighborPos, dist});
+			}
+		}
+	}
+	return found_light;
+}
+
+// get_natural_light(pos[, time_of_day]) — mirror of server-side core.get_natural_light
+int ModApiClient::l_get_natural_light(lua_State *L)
+{
+	Client *client = getClient(L);
+	ClientMap &map = client->getEnv().getClientMap();
+	v3s16 pos = read_v3s16(L, 1);
+
+	bool is_position_ok;
+	MapNode n = map.getNode(pos, &is_position_ok);
+	if (!is_position_ok)
+		return 0;
+
+	// If the daylight is 0, nothing needs to be calculated
+	u8 daylight = n.param1 & 0x0f;
+	if (daylight == 0) {
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	u32 time_of_day;
+	if (lua_isnumber(L, 2)) {
+		time_of_day = 24000.0 * lua_tonumber(L, 2);
+		time_of_day %= 24000;
+	} else {
+		time_of_day = client->getEnv().getTimeOfDay();
+	}
+	u32 dnr = time_to_daynight_ratio(time_of_day, true);
+
+	// If it's the same as the artificial light, the sunlight needs to be
+	// searched for because the value may not emanate from the sun
+	if (daylight == n.param1 >> 4)
+		daylight = clientFindSunlight(client, pos);
+
+	lua_pushinteger(L, dnr * daylight / 1000);
+	return 1;
+}
+
+// add_task_node(pos, color)
+int ModApiClient::l_add_task_node(lua_State *L)
+{
+	TaskMarkerStore::addNode(checkFloatPos(L, 1), read_ARGB8(L, 2));
+	return 0;
+}
+
+// clear_task_node(pos)
+int ModApiClient::l_clear_task_node(lua_State *L)
+{
+	lua_pushboolean(L, TaskMarkerStore::removeNode(checkFloatPos(L, 1)));
+	return 1;
+}
+
+// add_task_tracer(start_pos, end_pos, color)
+int ModApiClient::l_add_task_tracer(lua_State *L)
+{
+	TaskMarkerStore::addTracer(checkFloatPos(L, 1), checkFloatPos(L, 2),
+		read_ARGB8(L, 3));
+	return 0;
+}
+
+// clear_task_tracer(start_pos, end_pos)
+int ModApiClient::l_clear_task_tracer(lua_State *L)
+{
+	lua_pushboolean(L, TaskMarkerStore::removeTracer(
+		checkFloatPos(L, 1), checkFloatPos(L, 2)));
+	return 1;
+}
+
+// update_infotexts() — just a no-op stub for compat
+int ModApiClient::l_update_infotexts(lua_State *L)
+{
+	return 0;
+}
+
+// get_description()
+int ModApiClient::l_get_description(lua_State *L)
+{
+	lua_pushstring(L, "Antilua");
 	return 1;
 }
 
 // find_path(start_pos, end_pos)
 int ModApiClient::l_find_path(lua_State *L)
 {
-    // Read start and end positions from Lua
-    v3f start = check_v3f(L, 1);
-    v3f end = check_v3f(L, 2);
+	v3f start = check_v3f(L, 1);
+	v3f end = check_v3f(L, 2);
 	Client *client = getClient(L);
-	const NodeDefManager *ndef = getGameDef(L)->ndef();
-    // Run pathfinding
-    Pathfind pathfinder;
-    std::vector<PathNode> path = pathfinder.get_path(start, end, client, ndef);
-
-    // If no path found, return false
-    if (path.empty()) {
-        lua_pushboolean(L, false);
-        return 1;
-    }
-
-    // Create Lua table for path
-    lua_newtable(L);
-
-    int i = 1;
-    for (const PathNode &node : path) {
-        lua_newtable(L);
-
-        lua_pushnumber(L, node.position.X);
-        lua_setfield(L, -2, "x");
-
-        lua_pushnumber(L, node.position.Y);
-        lua_setfield(L, -2, "y");
-
-        lua_pushnumber(L, node.position.Z);
-        lua_setfield(L, -2, "z");
-
-        lua_rawseti(L, -2, i++);
-    }
-
-    return 1;
+	Pathfind finder;
+	auto path = finder.get_path(start, end, client,
+		client->getNodeDefManager(), 10000, false);
+	lua_newtable(L);
+	int idx = 1;
+	for (const auto &pn : path) {
+		push_v3f(L, pn.position);
+		lua_rawseti(L, -2, idx++);
+	}
+	return 1;
 }
 
-// load_media(filename)   Load a media file (model/image/sound/font) from a path
+// load_media(filename) — read file content from custom_assets dir
 int ModApiClient::l_load_media(lua_State *L)
 {
-	const char *filename = luaL_checkstring(L, 1);
-
-	std::string fullpath = porting::path_user + DIR_DELIM + "textures" + DIR_DELIM + "custom_assets" +  DIR_DELIM + filename;
-	
-	std::ifstream f(fullpath, std::ios::binary);
-
-	if (!f.good()) {
-		lua_pushboolean(L, false);
-		lua_pushstring(L, "File not found");
-		return 2;
-	}
-
-	std::ostringstream buffer;
-	buffer << f.rdbuf();
-	std::string data = buffer.str();
-
-	Client *client = getClient(L);
-	bool success = client->loadMedia(data, filename, false);
-
-	lua_pushboolean(L, success);
-	if (!success)
-		lua_pushstring(L, "Failed to load file");
-	else
+	std::string filename = luaL_checkstring(L, 1);
+	std::string path = porting::path_user + DIR_DELIM "textures"
+		+ DIR_DELIM "custom_assets" + DIR_DELIM + filename;
+	std::string data;
+	if (!fs::ReadFile(path, data)) {
 		lua_pushnil(L);
-
-	return 2;
+		return 1;
+	}
+	lua_pushlstring(L, data.data(), data.size());
+	return 1;
 }
-
 
 void ModApiClient::Initialize(lua_State *L, int top)
 {
 	API_FCT(get_current_modname);
 	API_FCT(get_modpath);
+	API_FCT(get_modpath_real);
 	API_FCT(print);
 	API_FCT(display_chat_message);
+	API_FCT(show_toast);
 	API_FCT(send_chat_message);
 	API_FCT(clear_out_chat_queue);
 	API_FCT(get_player_names);
+	API_FCT(set_last_run_mod);
+	API_FCT(get_last_run_mod);
+	API_FCT(show_formspec);
+	API_FCT(send_respawn);
 	API_FCT(gettext);
 	API_FCT(get_node_or_nil);
 	API_FCT(disconnect);
+	API_FCT(find_nodes_near);
+	API_FCT(find_nodes_near_under_air_except);
 	API_FCT(get_meta);
+	// FIXME: sound_play/stop/fade need ISoundManager porting
 	API_FCT(get_server_info);
 	API_FCT(get_item_def);
+	API_FCT(get_item_names);
 	API_FCT(get_node_def);
 	API_FCT(get_privilege_list);
 	API_FCT(get_builtin_path);
 	API_FCT(get_language);
 	API_FCT(get_csm_restrictions);
 	API_FCT(send_damage);
-	API_FCT(dig_node);
-	API_FCT(start_dig);
-	API_FCT(get_inv_item_damage);
-	API_FCT(get_inv_item_break);
-
-	API_FCT(set_fast_speed);
 	API_FCT(place_node);
-
-	API_FCT(interact);
+	API_FCT(dig_node);
 	API_FCT(get_inventory);
 	API_FCT(set_keypress);
 	API_FCT(drop_selected_item);
 	API_FCT(get_objects_inside_radius);
-	API_FCT(get_all_objects);
-	API_FCT(get_active_object);
-	API_FCT(add_active_object);
 	API_FCT(make_screenshot);
+	API_FCT(interact);
+	API_FCT(send_inventory_fields);
+	API_FCT(send_nodemeta_fields);
+	API_FCT(send_raw_packet);
+	API_FCT(send_raw_mtp_packet);
+	API_FCT(get_peer_id);
+	API_FCT(read_schematic);
+	API_FCT(serialize_schematic);
+	API_FCT(read_file);
+	API_FCT(decode_image);
+	API_FCT(write_file);
+	API_FCT(append_file);
+	API_FCT(get_dir_list);
+	API_FCT(create_client_entity);
+	API_FCT(detach);
+	API_FCT(reattach);
+	API_FCT(cheat_menu_set_visible);
+	API_FCT(get_quick_menu_entries);
+	API_FCT(activate_quick_menu_entry);
+	API_FCT(open_inventory);
+	API_FCT(quick_menu_open);
+	API_FCT(quick_menu_close);
+	API_FCT(layer_show);
+	API_FCT(layer_hide);
+	API_FCT(layer_toggle);
+	API_FCT(layer_is_visible);
+	API_FCT(get_layers);
+	API_FCT(register_layer);
+	API_FCT(draw_rect);
+	API_FCT(draw_text);
+	API_FCT(draw_texture);
+	API_FCT(get_cheat_desktops);
+	API_FCT(cheat_desktop_show);
+	API_FCT(register_cheat_desktop);
+	API_FCT(get_data_path);
+	API_FCT(get_serverdata_path);
+	// Extended API
+	API_FCT(start_dig);
+	API_FCT(get_item_damage_against);
+	API_FCT(get_inv_item_damage);  // compat shim
+	API_FCT(get_item_dig_time);
+	API_FCT(get_inv_item_break);   // compat shim
+	API_FCT(set_fast_speed);
+	API_FCT(get_all_objects);
+	API_FCT(get_active_object_by_id);
+	API_FCT(get_active_object);    // compat shim
 	API_FCT(all_loaded_nodes);
 	API_FCT(nodes_at_block_pos);
 	API_FCT(can_attack);
 	API_FCT(get_server_url);
-	API_FCT(file_write);
-	API_FCT(file_append);
 	API_FCT(get_node_name);
+	API_FCT(get_node_raw);
+	API_FCT(get_day_count);
+	API_FCT(get_loaded_blocks);
+	API_FCT(get_modnames);
+	API_FCT(get_node_boxes);
+	API_FCT(get_connected_players);
+	API_FCT(get_player_by_name);
+	API_FCT(get_objects_in_area);
+	API_FCT(get_natural_light);
+	API_FCT(get_player_information);
+	API_FCT(get_player_window_information);
 	API_FCT(add_task_node);
 	API_FCT(clear_task_node);
 	API_FCT(add_task_tracer);
 	API_FCT(clear_task_tracer);
-	API_FCT(send_inventory_fields);
-	API_FCT(send_nodemeta_fields);
 	API_FCT(update_infotexts);
 	API_FCT(get_description);
 	API_FCT(find_path);
 	API_FCT(load_media);
+	API_FCT(set_node_esp_list);
+	API_FCT(get_node_esp_positions);
+	API_FCT(reload_mod);
+}
+
+void ModApiClient::InitializeSSCSM(lua_State *L, int top)
+{
+	API_FCT(get_current_modname);
+	API_FCT(get_modpath);
+	API_FCT(get_modpath_real);
+	API_FCT(print);
+	API_FCT(get_builtin_path);
 }

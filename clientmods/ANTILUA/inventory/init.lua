@@ -1,0 +1,8 @@
+local modpath = core.get_modpath(core.get_current_modname())
+dofile(modpath .. "/invtabs.lua")
+dofile(modpath .. "/autorefill.lua")
+dofile(modpath .. "/dumpfull.lua")
+dofile(modpath .. "/crafting.lua")
+dofile(modpath .. "/invviewer.lua")
+dofile(modpath .. "/cheststealer.lua")
+dofile(modpath .. "/autosort.lua")

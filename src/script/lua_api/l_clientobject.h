@@ -1,5 +1,5 @@
 /*
-Dragonfire
+Antilua
 Copyright (C) 2020 system32
 
 This program is free software; you can redistribute it and/or modify
@@ -52,13 +52,6 @@ private:
 	// get_pos(self)
 	// returns: {x=num, y=num, z=num}
 	static int l_get_pos(lua_State *L);
-	
-	// set_pos(self, pos)
-	// requires: {x=num, y=num, z=num}
-	static int l_set_pos(lua_State *L);
-
-	// set_attachment(self, parent_obj_id, parent_bone_name, position, rotation, force_visible)
-	static int l_set_attachment(lua_State *L);
 
 	// get_velocity(self)
 	static int l_get_velocity(lua_State *L);
@@ -87,7 +80,6 @@ private:
 	// get_item_textures(self)
 	static int l_get_item_textures(lua_State *L);
 
-
 	// get_properties(self)
 	static int l_get_properties(lua_State *L);
 
@@ -96,9 +88,6 @@ private:
 
 	// get_hp(self)
 	static int l_get_hp(lua_State *L);
-
-	// get_id(self)
-	static int l_get_id(lua_State *L);
 
 	// get_max_hp(self)
 	static int l_get_max_hp(lua_State *L);
@@ -112,8 +101,12 @@ private:
 	// remove(self)
 	static int l_remove(lua_State *L);
 
-	
+	// Extended API
+	static int l_set_pos(lua_State *L);
+	static int l_set_attachment(lua_State *L);
+	static int l_get_id(lua_State *L);
+
 	// set_nametag_images(self, images)
-	static int l_set_nametag_images(lua_State *L);
-	
+	// FIXME: requires GenericCAO::nametag_images and Camera/Nametag changes
+	// static int l_set_nametag_images(lua_State *L);
 };

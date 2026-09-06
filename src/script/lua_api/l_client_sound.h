@@ -1,4 +1,4 @@
-// Luanti
+// Antilua
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright (C) 2023 DS
 // Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
@@ -16,6 +16,9 @@ class ModApiClientSound : public ModApiBase
 private:
 	// sound_play(spec, parameters)
 	static int l_sound_play(lua_State *L);
+
+	// debug_print_playing_sounds()
+	static int l_debug_print_playing_sounds(lua_State *L);
 
 public:
 	static void Initialize(lua_State *L, int top);
