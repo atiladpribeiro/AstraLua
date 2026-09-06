@@ -1,25 +1,7 @@
 name: appimage
 
 on:
-  push:
-    paths:
-      - 'lib/**.[ch]'
-      - 'lib/**.cpp'
-      - 'src/**.[ch]'
-      - 'src/**.cpp'
-      - '**/CMakeLists.txt'
-      - 'cmake/Modules/**'
-      - 'util/buildbot/**'
-      - 'misc/AppImageBuilder.yml'
-      - 'util/ci/**'
-      - '.github/workflows/**.yml'
-      - 'Dockerfile'
-      - '.dockerignore'
-
-env:
-  CMAKE_BUILD_TYPE: 'Release'
-  CC: clang
-  CXX: clang++
+  workflow_dispatch:
 
 jobs:
   clang:
