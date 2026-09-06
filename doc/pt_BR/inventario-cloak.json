@@ -1,0 +1,603 @@
+[
+  {
+    "name": "AutoCraft",
+    "category": "Bots",
+    "setting": "autocraft",
+    "file": "builtin/cheats/autocraft.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoCraft_Menu",
+    "category": "Bots",
+    "setting": "autocraft_menu",
+    "file": "builtin/cheats/autocraft.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoTeam",
+    "category": "Misc",
+    "setting": "autoteam",
+    "file": "builtin/cheats/autoteam.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoTotem",
+    "category": "Combat",
+    "setting": "autototem",
+    "file": "builtin/cheats/autototem.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "ChatEffects",
+    "category": "Misc",
+    "setting": "use_chat_effects",
+    "file": "builtin/cheats/chatfilter_bypass.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Killaura",
+    "category": "Combat",
+    "setting": "killaura",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoAim",
+    "category": "Combat",
+    "setting": "autoaim",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Orbit",
+    "category": "Combat",
+    "setting": "orbit",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "TP Aura",
+    "category": "Combat",
+    "setting": "tpaura",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "TriggerBot",
+    "category": "Combat",
+    "setting": "tbot",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Criticals",
+    "category": "Combat",
+    "setting": "critical_hits",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "DoubleTap",
+    "category": "Combat",
+    "setting": "killaura.doubletap",
+    "file": "builtin/cheats/combat.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "CombatLog",
+    "category": "Combat",
+    "setting": "combatlog",
+    "file": "builtin/cheats/combatlog.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoEject",
+    "category": "Misc",
+    "setting": "autoeject",
+    "file": "builtin/cheats/inventory.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoPlanks",
+    "category": "Misc",
+    "setting": "autoplanks",
+    "file": "builtin/cheats/inventory.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoRefill",
+    "category": "Misc",
+    "setting": "autorefill",
+    "file": "builtin/cheats/inventory.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "FlagAura",
+    "category": "Misc",
+    "setting": "flagaura",
+    "file": "builtin/cheats/misc.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoHeal",
+    "category": "Misc",
+    "setting": "auto_heal",
+    "file": "builtin/cheats/misc.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AppleAura",
+    "category": "Misc",
+    "setting": "appleaura",
+    "file": "builtin/cheats/misc.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Spammer",
+    "category": "Misc",
+    "setting": "spammer",
+    "file": "builtin/cheats/misc.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Velocity",
+    "category": "Movement",
+    "setting": "velocity",
+    "file": "builtin/cheats/physics_override.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Overrides",
+    "category": "Movement",
+    "setting": "overrides",
+    "file": "builtin/cheats/physics_override.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Strata",
+    "category": "Player",
+    "setting": "strata",
+    "file": "builtin/cheats/strata.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Scaffold",
+    "category": "World",
+    "setting": "scaffold",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "ScaffoldPlus",
+    "category": "World",
+    "setting": "scaffold_plus",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "BlockWater",
+    "category": "World",
+    "setting": "block_water",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "BlockLava",
+    "category": "World",
+    "setting": "block_lava",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AutoTNT",
+    "category": "World",
+    "setting": "autotnt",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Nuke",
+    "category": "World",
+    "setting": "nuke",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Replace",
+    "category": "World",
+    "setting": "replace",
+    "file": "builtin/cheats/worldutil.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Blink",
+    "category": "Interact",
+    "setting": "blink",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "CheatHUD",
+    "setting": "cheat_hud",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "FullBright",
+    "setting": "fullbright",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "BrightNight",
+    "setting": "no_night",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Xray",
+    "setting": "xray",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "EntityESP",
+    "setting": "enable_entity_esp",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "EntityTracers",
+    "setting": "enable_entity_tracers",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "PlayerESP",
+    "setting": "enable_player_esp",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "PlayerTracers",
+    "setting": "enable_player_tracers",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NodeESP",
+    "setting": "enable_node_esp",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NodeTracers",
+    "setting": "enable_node_tracers",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "TunnelESP",
+    "setting": "enable_tunnel_esp",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "TunnelTracers",
+    "setting": "enable_tunnel_tracers",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "HUDBypass",
+    "setting": "hud_flags_bypass",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "HealthESP",
+    "setting": "enable_health_esp",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "NoHurtCam",
+    "setting": "no_hurt_cam",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NoDrownCam",
+    "setting": "no_drown_cam",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "NoParticles",
+    "setting": "norender.particles",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "TaskTracers",
+    "setting": "enable_task_tracers",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "TaskNodes",
+    "setting": "enable_task_nodes",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "DetachedCamera",
+    "setting": "detached_camera",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "TargetHUD",
+    "setting": "enable_combat_target_hud",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Coords",
+    "setting": "coords",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "LeftHand",
+    "setting": "left_hand",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Nametags",
+    "setting": "nametags",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "FOV",
+    "setting": "fov_setting",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Skybox",
+    "setting": "custom_skybox",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "PrivBypass",
+    "setting": "priv_bypass",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NoFallDamage",
+    "setting": "prevent_natural_damage",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Reach",
+    "setting": "reach",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoRespawn",
+    "setting": "autorespawn",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "LuaControl",
+    "setting": "lua_control",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NoForceRotate",
+    "setting": "no_force_rotate",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "QuickMenu",
+    "setting": "use_old_menu",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "NoViewBob",
+    "setting": "nobob",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Freecam",
+    "setting": "freecam",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoForward",
+    "setting": "continuous_forward",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "PitchMove",
+    "setting": "pitch_move",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoJump",
+    "setting": "autojump",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Flight",
+    "setting": "free_move",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Noclip",
+    "setting": "noclip",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "FastMove",
+    "setting": "fast_move",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Jesus",
+    "setting": "jesus",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "NoSlow",
+    "setting": "no_slow",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "JetPack",
+    "setting": "jetpack",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AntiSlip",
+    "setting": "antislip",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AirJump",
+    "setting": "airjump",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Spider",
+    "setting": "spider",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoSneak",
+    "setting": "autosneak",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "Step",
+    "setting": "step",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "BunnyHop",
+    "setting": "BHOP",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AntiKnockback",
+    "setting": "antiknockback",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AttachmentFloat",
+    "setting": "float_above_parent",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "ThroughWalls",
+    "setting": "throughwalls",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "Blink",
+    "setting": "blink",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "FastHit",
+    "setting": "spamclick",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoHit",
+    "setting": "autohit",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "FastPlace",
+    "setting": "fastplace",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoPlace",
+    "setting": "autoplace",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoDig",
+    "setting": "autodig",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "FastDig",
+    "setting": "fastdig",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "InstantBreak",
+    "setting": "instant_break",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoTool",
+    "setting": "autotool",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": true
+  },
+  {
+    "name": "AutoStaff",
+    "setting": "autostaff",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  },
+  {
+    "name": "AntiAFK",
+    "setting": "anti_afk",
+    "file": "builtin/client/cheats.lua",
+    "setting_found_in_antilua": false
+  }
+]
