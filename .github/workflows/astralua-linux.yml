@@ -29,11 +29,15 @@ jobs:
             -DENABLE_POSTGRESQL=OFF -DENABLE_REDIS=OFF
           cmake --build build --parallel 2
       - name: Testes unitários
-        run: ./bin/astralua --run-unittests --logfile unit-tests.log
+        run: |
+          test -x ./bin/astralua || test -x ./bin/cloakv4
+          bin=$(test -x ./bin/astralua && echo ./bin/astralua || echo ./bin/cloakv4)
+          "$bin" --run-unittests --logfile unit-tests.log
       - name: Verificar inicialização e dados do usuário
         run: |
-          test -x ./bin/astralua
-          ./bin/astralua --version
+          test -x ./bin/astralua || test -x ./bin/cloakv4
+          bin=$(test -x ./bin/astralua && echo ./bin/astralua || echo ./bin/cloakv4)
+          "$bin" --version
           grep -q 'AstraLua' CMakeLists.txt
           grep -q 'vibe coding' README.md
       - name: Publicar registros
