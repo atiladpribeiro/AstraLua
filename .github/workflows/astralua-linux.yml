@@ -1,0 +1,96 @@
+name: Preparar e testar base AstraLua
+
+on:
+  push:
+    branches: [preparacao-5.17]
+    paths: ['.github/workflows/preparar-base.yml', 'integracao/base.patch']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: preparar-base-astralua
+  cancel-in-progress: false
+
+jobs:
+  base:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Obter o fork
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Integrar a revisão fixa do Antilua
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp integracao/base.patch "$RUNNER_TEMP/base.patch"
+          cp .github/workflows/preparar-base.yml "$RUNNER_TEMP/preparar-base.yml"
+          git fetch --no-tags https://github.com/corarona/antilua.git 4af62a89b689769abee7c33fe583fadabbc732ed
+          test "$(git rev-parse FETCH_HEAD)" = 4af62a89b689769abee7c33fe583fadabbc732ed
+          git read-tree --reset -u FETCH_HEAD
+          git apply --index "$RUNNER_TEMP/base.patch"
+          mkdir -p .github/workflows
+          cp "$RUNNER_TEMP/preparar-base.yml" .github/workflows/preparar-base.yml
+          git config user.name 'AstraLua Build'
+          git config user.email 'astralua-build@users.noreply.github.com'
+          git add -A
+          git commit -m 'Preparar base 5.17.0 do AstraLua para integração'
+          # A base fica em uma branch de trabalho, sem publicar uma release.
+          git push origin HEAD:refs/heads/integracao-5.17
+      - name: Instalar dependências de compilação
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gettext \
+            libsqlite3-dev libgmp-dev libleveldb-dev libcurl4-openssl-dev \
+            libzstd-dev libssl-dev libpng-dev libjpeg-dev libgl1-mesa-dev \
+            libsdl2-dev libfreetype-dev libogg-dev libvorbis-dev libopenal-dev \
+            libluajit-5.1-dev xvfb xauth mesa-utils
+      - name: Compilar no GitHub
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DRUN_IN_PLACE=ON -DBUILD_SERVER=OFF -DBUILD_UNITTESTS=ON \
+            -DENABLE_LTO=OFF -DENABLE_SYSTEM_JSONCPP=OFF \
+            -DENABLE_POSTGRESQL=OFF -DENABLE_REDIS=OFF
+          cmake --build build --parallel 2
+      - name: Executar testes unitários
+        env:
+          ASTRALUA_USER_PATH: ${{ runner.temp }}/astralua-unit
+        run: |
+          mkdir -p "$ASTRALUA_USER_PATH"
+          ./bin/astralua --run-unittests --logfile "$RUNNER_TEMP/unittests.log"
+      - name: Executar uma partida local e testes de integração
+        shell: bash
+        env:
+          ASTRALUA_USER_PATH: ${{ runner.temp }}/astralua-integration
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ASTRALUA_USER_PATH/worlds/teste"
+          printf '%s\n' 'gameid = devtest' 'backend = sqlite3' \
+            'player_backend = sqlite3' 'auth_backend = sqlite3' \
+            'mod_storage_backend = sqlite3' > "$ASTRALUA_USER_PATH/worlds/teste/world.mt"
+          printf '%s\n' 'al_test_enable = true' 'enable_sound = false' \
+            'server_announce = false' 'bind_address = 127.0.0.1' \
+            'enable_ipv6 = false' 'language = en' > "$ASTRALUA_USER_PATH/minetest.conf"
+          set +e
+          xvfb-run -a timeout --signal=TERM --kill-after=10 90 \
+            ./bin/astralua --go --world "$ASTRALUA_USER_PATH/worlds/teste" \
+            --gameid devtest --name TesteLocal --port 30997 --info \
+            --logfile "$RUNNER_TEMP/integration.log" > "$RUNNER_TEMP/integration-console.log" 2>&1
+          result=$?
+          set -e
+          test "$result" = 0 || test "$result" = 124
+          grep -E '\[AL_TEST\] Results: [0-9]+ passed, 0 failed' "$RUNNER_TEMP/integration.log"
+          ! grep -E '\[AL_TEST\] FAIL:|ERROR\[|Segmentation fault|AddressSanitizer' "$RUNNER_TEMP/integration.log"
+      - name: Guardar os registros dos testes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: registros-base-astralua
+          path: |
+            ${{ runner.temp }}/unittests.log
+            ${{ runner.temp }}/integration.log
+            ${{ runner.temp }}/integration-console.log
+          if-no-files-found: warn
