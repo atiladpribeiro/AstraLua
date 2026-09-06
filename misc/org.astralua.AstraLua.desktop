@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=AstraLua
+GenericName=Cliente Luanti
+Comment=Cliente de jogos baseado no Luanti
+Exec=astralua
+Icon=astralua
+Terminal=false
+Type=Application
+Categories=Game;Simulation;
+StartupNotify=false
+StartupWMClass=astralua
+Keywords=Luanti;Minetest;mundos;blocos;jogos;
