@@ -1,0 +1,17 @@
+{
+  "projeto": "AstraLua",
+  "estado": "integracao-em-andamento",
+  "cloakv4": {
+    "url": "https://github.com/TeamAcedia/CloakV4",
+    "commit": "2f4d2c1ab85a30001f9cb8b99beb53c2af67e609"
+  },
+  "antilua": {
+    "url": "https://github.com/corarona/antilua",
+    "commit": "4af62a89b689769abee7c33fe583fadabbc732ed"
+  },
+  "luanti": {
+    "url": "https://github.com/luanti-org/luanti",
+    "versao": "5.17.0",
+    "commit": "c0e6812b1a4260bb25a1f606f70f55f4962bb97d"
+  }
+}
