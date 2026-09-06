@@ -16,14 +16,15 @@ jobs:
       - name: Dependências
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake gettext patchelf desktop-file-utils fakeroot libsqlite3-dev libgmp-dev libleveldb-dev libcurl4-openssl-dev libzstd-dev libssl-dev libpng-dev libjpeg-dev libgl1-mesa-dev libsdl2-dev libfreetype-dev libogg-dev libvorbis-dev libopenal-dev libluajit-5.1-dev
+          sudo apt-get install -y cmake gettext patchelf desktop-file-utils fakeroot python3-venv libsqlite3-dev libgmp-dev libleveldb-dev libcurl4-openssl-dev libzstd-dev libssl-dev libpng-dev libjpeg-dev libgl1-mesa-dev libsdl2-dev libfreetype-dev libogg-dev libvorbis-dev libopenal-dev libluajit-5.1-dev
           sudo wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool
           sudo chmod +x /usr/local/bin/appimagetool
-          python3 -m pip install --user appimage-builder
+          python3 -m venv "$RUNNER_TEMP/appimage-venv"
+          "$RUNNER_TEMP/appimage-venv/bin/pip" install --upgrade pip setuptools wheel
+          "$RUNNER_TEMP/appimage-venv/bin/pip" install appimage-builder
       - name: Compilar e empacotar
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          VERSION="${GITHUB_REF_NAME#v}" appimage-builder --recipe misc/AppImageBuilder.yml
+          VERSION="${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/appimage-venv/bin/appimage-builder" --recipe misc/AppImageBuilder.yml
           test -n "$(find . -maxdepth 1 -name '*.AppImage' -print -quit)"
       - name: Criar release
         env:
