@@ -5,9 +5,9 @@ AppDir:
   app_info:
     id: org.luanti.Luanti
     name: Luanti
-    icon: luanti-xorg-icon-128
+    icon: luanti
     version: !ENV ${VERSION}
-    exec: usr/bin/astralua
+    exec: usr/bin/antilua
     exec_args: $@
   files:
     include: []
