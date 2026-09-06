@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   VERSION: 5.17.0
@@ -29,9 +29,10 @@ jobs:
         run: |
           . .venv-appimage/bin/activate
           appimage-builder --recipe misc/AppImageBuilder.yml --skip-tests
-      - name: Publicar AppImage
-        uses: actions/upload-artifact@v4
+      - name: Publicar AppImage na release
+        uses: softprops/action-gh-release@v2
         with:
-          name: AstraLua-AppImage
-          path: '*.AppImage'
-          if-no-files-found: error
+          tag_name: v5.17.0-linux-${{ github.run_number }}
+          name: AstraLua 5.17.0 Linux (build ${{ github.run_number }})
+          generate_release_notes: true
+          files: '*.AppImage'
