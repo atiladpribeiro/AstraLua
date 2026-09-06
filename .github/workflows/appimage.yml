@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 
+env:
+  VERSION: 5.17.0
+
 jobs:
   appimage:
     runs-on: ubuntu-22.04
