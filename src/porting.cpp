@@ -519,7 +519,8 @@ bool setSystemPaths()
 		path_user = std::string(minetest_user_path);
 	} else {
 		// TODO: luanti with migration
-		path_user = std::string(getHomeOrFail()) + DIR_DELIM "Luanti";
+		path_user = std::string(getHomeOrFail()) + DIR_DELIM "."
+			+ "minetest";
 	}
 
 	return true;
@@ -552,7 +553,7 @@ bool setSystemPaths()
 		// TODO: luanti with migration
 		path_user = std::string(getHomeOrFail())
 			+ "/Library/Application Support/"
-			+ "Luanti";
+			+ "minetest";
 	}
 	return true;
 }
