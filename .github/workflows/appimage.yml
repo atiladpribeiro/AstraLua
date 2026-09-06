@@ -1,4 +1,4 @@
-name: AstraLua AppImage
+name: Luanti AppImage
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
       - name: Publicar AppImage na release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.17.0-linux-${{ github.run_number }}
-          name: AstraLua 5.17.0 Linux (build ${{ github.run_number }})
+          tag_name: luanti-5.17.0-linux-${{ github.run_number }}
+          name: Luanti 5.17.0 Linux (build ${{ github.run_number }})
           generate_release_notes: true
           files: '*.AppImage'
