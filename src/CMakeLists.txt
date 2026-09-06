@@ -1,4 +1,4 @@
-project(antilua)
+project(astralua)
 
 INCLUDE(CheckTypeSize)
 INCLUDE(CheckIncludeFiles)
