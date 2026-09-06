@@ -4,8 +4,8 @@ if(POLICY CMP0177)
 endif()
 
 # This can be read from ${PROJECT_NAME} after project() is called
-project(cloakv4)
-set(PROJECT_NAME_CAPITALIZED "CloakV4")
+project(astralua)
+set(PROJECT_NAME_CAPITALIZED "AstraLua")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
@@ -14,7 +14,7 @@ set(CLANG_MINIMUM_VERSION "7.0.1")
 
 # You should not need to edit these manually, use util/bump_version.sh
 set(VERSION_MAJOR 5)
-set(VERSION_MINOR 12)
+set(VERSION_MINOR 17)
 set(VERSION_PATCH 0)
 set(VERSION_EXTRA "" CACHE STRING "Stuff to append to version string")
 
